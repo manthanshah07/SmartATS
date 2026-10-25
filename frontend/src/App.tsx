@@ -1,25 +1,27 @@
-import { FormEvent, KeyboardEvent, useState } from "react"
+import { ChangeEvent, FormEvent, useMemo, useState } from "react"
 import {
+  AlertCircle,
   BarChart3,
   Bell,
   BriefcaseBusiness,
   Building2,
   Check,
-  ChevronDown,
   ChevronRight,
   CircleDollarSign,
-  ClipboardList,
+  CircleUserRound,
   FileText,
-  LayoutDashboard,
+  Filter,
+  Loader2,
+  MapPin,
   Menu,
   Plus,
+  RefreshCw,
   Search,
   Settings2,
   Sparkles,
+  UploadCloud,
   Users,
   X,
-  MapPin,
-  Clock3,
 } from "lucide-react"
 import {
   Badge,
@@ -39,94 +41,712 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./components/ui/primitives"
+import {
+  formatJobType,
+  formatSalary,
+  Job,
+  useApplyToJob,
+  useJobs,
+} from "./hooks/useJobs"
 
-type IconType = typeof Users
-
-const pipeline = [
-  { label: "Applied", value: 286, width: "100%", color: "bg-indigo-500" },
-  { label: "Screening", value: 174, width: "61%", color: "bg-violet-500" },
-  { label: "Interview", value: 92, width: "32%", color: "bg-amber-400" },
-  { label: "Offered", value: 36, width: "13%", color: "bg-emerald-500" },
+const AVATAR_COLORS = [
+  "bg-indigo-600",
+  "bg-violet-600",
+  "bg-blue-600",
+  "bg-emerald-600",
+  "bg-cyan-700",
+  "bg-slate-900",
+  "bg-rose-600",
 ]
 
-const recentJobs = [
-  { title: "Senior Product Designer", department: "Design", applicants: 68, status: "Active", updated: "Today" },
-  { title: "Frontend Engineer", department: "Engineering", applicants: 54, status: "Active", updated: "Yesterday" },
-  { title: "Growth Marketing Manager", department: "Marketing", applicants: 42, status: "Active", updated: "Oct 22" },
-  { title: "Customer Success Lead", department: "Customer", applicants: 31, status: "Paused", updated: "Oct 18" },
-]
+function getCompanyColor(name?: string): string {
+  if (!name) return "bg-indigo-600"
+  let hash = 0
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  const index = Math.abs(hash) % AVATAR_COLORS.length
+  return AVATAR_COLORS[index]
+}
+
+function formatRelativeTime(dateString?: string): string {
+  if (!dateString) return "Recently"
+  const now = new Date()
+  const date = new Date(dateString)
+  const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000)
+
+  if (diffInSeconds < 60) return "Just now"
+  const diffInMinutes = Math.floor(diffInSeconds / 60)
+  if (diffInMinutes < 60) return `${diffInMinutes}m ago`
+  const diffInHours = Math.floor(diffInMinutes / 60)
+  if (diffInHours < 24) return `${diffInHours}h ago`
+  const diffInDays = Math.floor(diffInHours / 24)
+  if (diffInDays < 7) return `${diffInDays}d ago`
+  const diffInWeeks = Math.floor(diffInDays / 7)
+  return `${diffInWeeks}w ago`
+}
 
 function App() {
+  const [activeTab, setActiveTab] = useState<"candidate" | "recruiter">("candidate")
   const [sidebarOpen, setSidebarOpen] = useState(true)
-  const [postOpen, setPostOpen] = useState(false)
-  const [notice, setNotice] = useState<string | null>(null)
-  const [skills, setSkills] = useState(["Figma", "User research"])
-  const [skillInput, setSkillInput] = useState("")
 
-  function addSkill(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "Enter") {
-      event.preventDefault()
-      const skill = skillInput.trim()
-      if (skill && !skills.some((item) => item.toLowerCase() === skill.toLowerCase())) setSkills([...skills, skill])
-      setSkillInput("")
+  // Search & Filter State for Job Discovery
+  const [search, setSearch] = useState("")
+  const [location, setLocation] = useState("")
+  const [jobType, setJobType] = useState("all")
+  const [minSalary, setMinSalary] = useState<string>("all")
+
+  // Application Modal State
+  const [selectedJob, setSelectedJob] = useState<Job | null>(null)
+  const [resumeFile, setResumeFile] = useState<File | null>(null)
+  const [coverLetter, setCoverLetter] = useState("")
+  const [applyError, setApplyError] = useState<string | null>(null)
+  const [toastNotice, setToastNotice] = useState<string | null>(null)
+
+  // API Query Hooks
+  const {
+    data: jobs = [],
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useJobs({
+    search,
+    location,
+    job_type: jobType,
+    salary_min: minSalary !== "all" ? minSalary : undefined,
+    is_active: true,
+  })
+
+  // Apply Mutation Hook
+  const applyMutation = useApplyToJob()
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setApplyError(null)
+    const file = e.target.files?.[0]
+    if (file) {
+      if (file.size > 5 * 1024 * 1024) {
+        setApplyError("Resume file size must be less than 5MB.")
+        return
+      }
+      setResumeFile(file)
     }
   }
 
-  function publishJob(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setPostOpen(false)
-    setNotice("Job requisition published successfully. Your hiring team can now review applicants.")
+  const handleApplySubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!selectedJob) return
+    if (!resumeFile) {
+      setApplyError("Please select a PDF or DOCX resume to upload.")
+      return
+    }
+
+    setApplyError(null)
+    try {
+      await applyMutation.mutateAsync({
+        jobId: selectedJob.id,
+        file: resumeFile,
+        coverLetter: coverLetter.trim() || undefined,
+      })
+
+      setToastNotice(
+        `Application for "${selectedJob.title}" at ${selectedJob.company.name} submitted successfully! AI matching is now analyzing your profile.`
+      )
+      // Reset modal state
+      setResumeFile(null)
+      setCoverLetter("")
+      setSelectedJob(null)
+    } catch (err: any) {
+      const detail =
+        err.response?.data?.detail ||
+        err.response?.data?.non_field_errors?.[0] ||
+        err.response?.data?.file?.[0] ||
+        "Failed to submit application. Please verify your file and try again."
+      setApplyError(String(detail))
+    }
   }
 
   return (
     <div className="min-h-screen bg-[#f7f8fc] text-slate-900">
-      <aside className={`${sidebarOpen ? "w-[238px]" : "w-[76px]"} fixed inset-y-0 left-0 z-20 hidden border-r border-slate-200 bg-white transition-all lg:flex lg:flex-col`}>
+      {/* Sidebar */}
+      <aside
+        className={`${
+          sidebarOpen ? "w-[248px]" : "w-[78px]"
+        } fixed inset-y-0 left-0 z-20 hidden border-r border-slate-200 bg-white transition-all lg:flex lg:flex-col`}
+      >
         <div className="flex h-[76px] items-center gap-3 border-b border-slate-100 px-5">
-          <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-indigo-600 text-white"><BriefcaseBusiness className="size-5" /></div>
-          {sidebarOpen && <span className="text-lg font-bold tracking-tight">Smart<span className="text-indigo-600">ATS</span></span>}
+          <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-indigo-600 text-white shadow-sm">
+            <BriefcaseBusiness className="size-5" />
+          </div>
+          {sidebarOpen && (
+            <span className="text-lg font-bold tracking-tight">
+              Smart<span className="text-indigo-600">ATS</span>
+            </span>
+          )}
         </div>
-        <div className="flex flex-1 flex-col justify-between p-3">
-          <nav className="flex flex-col gap-1" aria-label="Recruiter navigation">
-            <NavItem icon={LayoutDashboard} label="Overview" active expanded={sidebarOpen} />
-            <NavItem icon={BriefcaseBusiness} label="Job Management" expanded={sidebarOpen} count="12" />
-            <NavItem icon={Users} label="Candidates" expanded={sidebarOpen} />
-            <NavItem icon={BarChart3} label="Analytics" expanded={sidebarOpen} />
+        <div className="flex flex-1 flex-col justify-between p-4">
+          <nav className="flex flex-col gap-1.5" aria-label="Main navigation">
+            <button
+              onClick={() => setActiveTab("candidate")}
+              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
+                activeTab === "candidate"
+                  ? "bg-indigo-50 text-indigo-700"
+                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+              }`}
+            >
+              <Search className="size-5 shrink-0" />
+              {sidebarOpen && <span className="flex-1 text-left">Find Jobs</span>}
+            </button>
+            <button
+              onClick={() => setActiveTab("recruiter")}
+              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
+                activeTab === "recruiter"
+                  ? "bg-indigo-50 text-indigo-700"
+                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+              }`}
+            >
+              <BarChart3 className="size-5 shrink-0" />
+              {sidebarOpen && <span className="flex-1 text-left">Recruiter Analytics</span>}
+            </button>
           </nav>
-          <div className="flex flex-col gap-1">
-            <NavItem icon={Settings2} label="Settings" expanded={sidebarOpen} />
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="mt-2 flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-400 hover:bg-slate-50 hover:text-slate-700" aria-label="Toggle sidebar"><Menu className="size-5 shrink-0" />{sidebarOpen && <span>Collapse menu</span>}</button>
+          <div className="flex flex-col gap-1.5 border-t border-slate-100 pt-3">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 hover:bg-slate-50 hover:text-slate-700"
+              aria-label="Toggle sidebar"
+            >
+              <Menu className="size-5 shrink-0" />
+              {sidebarOpen && <span>Collapse sidebar</span>}
+            </button>
           </div>
         </div>
       </aside>
 
-      <div className={`${sidebarOpen ? "lg:pl-[238px]" : "lg:pl-[76px]"} min-h-screen transition-all`}>
+      {/* Main Content Area */}
+      <div
+        className={`${
+          sidebarOpen ? "lg:pl-[248px]" : "lg:pl-[78px]"
+        } min-h-screen transition-all`}
+      >
+        {/* Header */}
         <header className="flex h-[76px] items-center justify-between border-b border-slate-200 bg-white px-5 sm:px-8">
-          <div className="flex items-center gap-3 lg:hidden"><div className="grid size-8 place-items-center rounded-lg bg-indigo-600 text-white"><BriefcaseBusiness className="size-4" /></div><span className="font-bold">Smart<span className="text-indigo-600">ATS</span></span></div>
-          <div className="hidden lg:block"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Recruiter workspace</p><h1 className="mt-1 text-lg font-bold">Analytics overview</h1></div>
-          <div className="flex items-center gap-3"><Button variant="ghost" size="icon" className="relative"><Bell className="size-5" /><span className="absolute right-2.5 top-2 size-1.5 rounded-full bg-rose-500 ring-2 ring-white" /></Button><DropdownMenu><DropdownMenuTrigger asChild><button className="flex items-center gap-2 rounded-full p-1 hover:bg-slate-50"><div className="grid size-9 place-items-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-700">JD</div><div className="hidden text-left sm:block"><p className="text-sm font-semibold">Jordan Davis</p><p className="text-[11px] text-slate-400">Recruiter</p></div><ChevronDown className="hidden size-4 text-slate-400 sm:block" /></button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem>View profile</DropdownMenuItem><DropdownMenuItem>Sign out</DropdownMenuItem></DropdownMenuContent></DropdownMenu></div>
-        </header>
-
-        <main className="mx-auto max-w-[1540px] px-5 py-7 sm:px-8 lg:px-10">
-          <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-400"><span>Workspace</span><ChevronRight className="size-3" /><span className="text-indigo-600">Overview</span></div><h2 className="text-2xl font-bold tracking-tight sm:text-[28px]">Hiring performance</h2><p className="mt-1 text-sm text-slate-500">Track your hiring pipeline and make your next great hire.</p></div><Button onClick={() => setPostOpen(true)}><Plus data-icon="inline-start" /> Post New Job</Button></div>
-          {notice && <div className="mb-5 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800"><span>{notice}</span><button aria-label="Dismiss notice" onClick={() => setNotice(null)}><X className="size-4" /></button></div>}
-          <div className="mb-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Total active jobs" value="12" note="+2 this month" icon={BriefcaseBusiness} /><Metric label="Total applicants" value="486" note="+18.4% vs last month" icon={Users} /><Metric label="Avg. time-to-hire" value="18 days" note="4 days faster" icon={Clock3} /><Metric label="Offer acceptance rate" value="84.6%" note="+6.2% vs last month" icon={Check} /></div>
-
-          <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold">Pipeline drop-off</h3><p className="mt-1 text-xs text-slate-500">Candidate volume across your hiring stages</p></div><Select value="30 days"><SelectTrigger className="h-9 w-[118px] text-xs"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="30 days">Last 30 days</SelectItem><SelectItem value="90 days">Last 90 days</SelectItem></SelectContent></Select></div><div className="mt-8 flex flex-col gap-5">{pipeline.map((stage) => <div key={stage.label} className="flex items-center gap-4"><span className="w-[72px] text-xs font-semibold text-slate-500">{stage.label}</span><div className="h-8 flex-1 rounded-lg bg-slate-100"><div className={`flex h-full items-center justify-end rounded-lg px-3 text-xs font-bold text-white ${stage.color}`} style={{ width: stage.width }}>{stage.value}</div></div><span className="w-10 text-right text-xs font-bold text-slate-700">{stage.value}</span></div>)}</div><div className="mt-7 flex items-center gap-5 border-t border-slate-100 pt-4 text-xs text-slate-500"><span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-indigo-500" />Candidate volume</span><span className="flex items-center gap-1.5"><span className="size-2 rounded-full bg-slate-200" />Drop-off area</span></div></section>
-            <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><div className="flex items-start justify-between"><div><h3 className="text-base font-bold">Hiring summary</h3><p className="mt-1 text-xs text-slate-500">Progress toward quarterly goals</p></div><Sparkles className="size-5 text-indigo-500" /></div><div className="mt-6 flex items-center gap-6"><div className="grid size-32 shrink-0 place-items-center rounded-full" style={{ background: "conic-gradient(#6366f1 68%, #e2e8f0 0)" }}><div className="grid size-24 place-items-center rounded-full bg-white"><div className="text-center"><p className="text-2xl font-bold">68%</p><p className="text-[10px] text-slate-400">goal complete</p></div></div></div><div className="flex flex-col gap-4"><div><p className="text-xs text-slate-500">Roles filled</p><p className="mt-0.5 text-lg font-bold">17 <span className="text-xs font-medium text-slate-400">of 25</span></p></div><div><p className="text-xs text-slate-500">Offers pending</p><p className="mt-0.5 text-lg font-bold">4 <span className="text-xs font-medium text-emerald-600">on track</span></p></div></div></div></section>
+          <div className="flex items-center gap-3 lg:hidden">
+            <div className="grid size-8 place-items-center rounded-lg bg-indigo-600 text-white">
+              <BriefcaseBusiness className="size-4" />
+            </div>
+            <span className="font-bold">
+              Smart<span className="text-indigo-600">ATS</span>
+            </span>
           </div>
 
-          <section className="mt-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6"><div className="mb-5 flex flex-col justify-between gap-3 sm:flex-row sm:items-center"><div><h3 className="text-base font-bold">Recent job requisitions</h3><p className="mt-1 text-xs text-slate-500">Monitor applicant activity across open roles.</p></div><div className="relative w-full sm:w-56"><Search className="absolute left-3 top-2.5 size-4 text-slate-400" /><Input className="h-9 pl-9 text-xs" placeholder="Search jobs..." /></div></div><div className="overflow-x-auto"><table className="w-full min-w-[650px] text-left"><thead><tr className="border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-400"><th className="pb-3 font-semibold">Job title</th><th className="pb-3 font-semibold">Applicants</th><th className="pb-3 font-semibold">Status</th><th className="pb-3 font-semibold">Last updated</th><th className="pb-3" /></tr></thead><tbody>{recentJobs.map((job) => <tr key={job.title} className="border-b border-slate-50 last:border-0"><td className="py-4"><div className="flex items-center gap-3"><div className="grid size-9 place-items-center rounded-lg bg-indigo-50 text-indigo-600"><FileText className="size-4" /></div><div><p className="text-sm font-semibold">{job.title}</p><p className="mt-0.5 text-xs text-slate-400">{job.department}</p></div></div></td><td className="py-4 text-sm font-semibold text-slate-700">{job.applicants}</td><td className="py-4"><Badge variant={job.status === "Active" ? "success" : "secondary"}>{job.status}</Badge></td><td className="py-4 text-xs text-slate-500">{job.updated}</td><td className="py-4 text-right"><Button variant="ghost" size="sm">View details <ChevronRight data-icon="inline-end" /></Button></td></tr>)}</tbody></table></div></section>
-        </main>
+          <div className="hidden lg:block">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
+              {activeTab === "candidate" ? "Candidate Portal" : "Recruiter Portal"}
+            </p>
+            <h1 className="mt-0.5 text-lg font-bold">
+              {activeTab === "candidate"
+                ? "Find your next career opportunity"
+                : "Recruiter Pipeline & Analytics"}
+            </h1>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" className="relative">
+              <Bell className="size-5 text-slate-500" />
+              <span className="absolute right-2.5 top-2 size-1.5 rounded-full bg-rose-500 ring-2 ring-white" />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="flex items-center gap-2 rounded-full p-1.5 hover:bg-slate-50">
+                  <div className="grid size-9 place-items-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-700">
+                    JD
+                  </div>
+                  <div className="hidden text-left sm:block">
+                    <p className="text-sm font-semibold">Jordan Davis</p>
+                    <p className="text-[11px] text-slate-400">Candidate</p>
+                  </div>
+                  <ChevronRight className="hidden size-4 rotate-90 text-slate-400 sm:block" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem>Candidate Profile</DropdownMenuItem>
+                <DropdownMenuItem>Application History</DropdownMenuItem>
+                <DropdownMenuItem>Sign out</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </header>
+
+        {/* Global Toast Alert */}
+        {toastNotice && (
+          <div className="mx-5 mt-5 sm:mx-8 lg:mx-10">
+            <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 shadow-sm">
+              <div className="flex items-center gap-2">
+                <Check className="size-5 shrink-0 text-emerald-600" />
+                <span>{toastNotice}</span>
+              </div>
+              <button
+                aria-label="Dismiss toast"
+                onClick={() => setToastNotice(null)}
+                className="text-emerald-600 hover:text-emerald-800"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Candidate Job Discovery View */}
+        {activeTab === "candidate" && (
+          <main className="mx-auto max-w-[1450px] px-5 py-7 sm:px-8 lg:px-10">
+            {/* Title Section */}
+            <section className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+              <div>
+                <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-400">
+                  <span>Workspace</span>
+                  <ChevronRight className="size-3" />
+                  <span className="text-indigo-600 font-semibold">Find Jobs</span>
+                </div>
+                <h2 className="text-2xl font-bold tracking-tight sm:text-[28px]">
+                  Explore open roles
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Discover AI-matched positions and submit your resume directly to hiring teams.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => refetch()}
+                  className="gap-2 text-xs"
+                >
+                  <RefreshCw className={`size-3.5 ${isLoading ? "animate-spin" : ""}`} />
+                  Refresh
+                </Button>
+              </div>
+            </section>
+
+            {/* Filter & Search Bar */}
+            <section className="mb-7 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="grid gap-3 md:grid-cols-[1.5fr_1fr_1.2fr_1fr]">
+                {/* Search Keyword */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-3.5 size-4 text-slate-400" />
+                  <Input
+                    aria-label="Search job titles or companies"
+                    placeholder="Search job titles, skills, or companies"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="pl-10 text-sm"
+                  />
+                </div>
+
+                {/* Job Type Selector */}
+                <Select value={jobType} onValueChange={setJobType}>
+                  <SelectTrigger aria-label="Job Type" className="text-sm">
+                    <SelectValue placeholder="Job Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All job types</SelectItem>
+                    <SelectItem value="FULL_TIME">Full-time</SelectItem>
+                    <SelectItem value="REMOTE">Remote</SelectItem>
+                    <SelectItem value="CONTRACT">Contract</SelectItem>
+                    <SelectItem value="PART_TIME">Part-time</SelectItem>
+                    <SelectItem value="INTERNSHIP">Internship</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                {/* Location Filter */}
+                <div className="relative">
+                  <MapPin className="absolute left-3 top-3.5 size-4 text-slate-400" />
+                  <Input
+                    aria-label="Location"
+                    placeholder="Location (e.g. San Francisco, Remote)"
+                    value={location}
+                    onChange={(e) => setLocation(e.target.value)}
+                    className="pl-10 text-sm"
+                  />
+                </div>
+
+                {/* Minimum Salary Filter */}
+                <Select value={minSalary} onValueChange={setMinSalary}>
+                  <SelectTrigger aria-label="Minimum Salary" className="text-sm">
+                    <SelectValue placeholder="Min. Salary" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Any Salary</SelectItem>
+                    <SelectItem value="60000">$60k+ / year</SelectItem>
+                    <SelectItem value="90000">$90k+ / year</SelectItem>
+                    <SelectItem value="120000">$120k+ / year</SelectItem>
+                    <SelectItem value="150000">$150k+ / year</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </section>
+
+            {/* Results Count & Header */}
+            <div className="mb-4 flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-700">
+                <span className="text-indigo-600 font-bold">{jobs.length}</span>{" "}
+                {jobs.length === 1 ? "role" : "roles"} matching your criteria
+              </p>
+            </div>
+
+            {/* Loading State */}
+            {isLoading && (
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white py-20 text-center shadow-sm">
+                <Loader2 className="size-8 animate-spin text-indigo-600" />
+                <p className="mt-3 text-sm font-semibold text-slate-700">
+                  Fetching active job requisitions...
+                </p>
+                <p className="text-xs text-slate-400">Connecting to live SmartATS API</p>
+              </div>
+            )}
+
+            {/* Error State */}
+            {!isLoading && isError && (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center shadow-sm">
+                <AlertCircle className="mx-auto size-8 text-rose-500" />
+                <p className="mt-2 text-base font-bold text-rose-900">
+                  Unable to load jobs
+                </p>
+                <p className="mt-1 text-sm text-rose-700">
+                  {(error as Error)?.message || "Failed to connect to backend server."}
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => refetch()}
+                  className="mt-4 border-rose-300 bg-white text-rose-800 hover:bg-rose-100"
+                >
+                  Try Again
+                </Button>
+              </div>
+            )}
+
+            {/* Empty State */}
+            {!isLoading && !isError && jobs.length === 0 && (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center shadow-sm">
+                <Search className="mx-auto mb-3 size-8 text-slate-300" />
+                <p className="font-semibold text-slate-800">No matching jobs found</p>
+                <p className="mt-1 text-sm text-slate-500">
+                  Try adjusting your filters or expanding your search location.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => {
+                    setSearch("")
+                    setLocation("")
+                    setJobType("all")
+                    setMinSalary("all")
+                  }}
+                >
+                  Clear all filters
+                </Button>
+              </div>
+            )}
+
+            {/* Job Cards Grid */}
+            {!isLoading && !isError && jobs.length > 0 && (
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {jobs.map((job) => (
+                  <article
+                    key={job.id}
+                    className="group flex min-h-[260px] flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div
+                        className={`grid size-11 place-items-center rounded-xl text-base font-bold text-white shadow-sm ${getCompanyColor(
+                          job.company?.name
+                        )}`}
+                      >
+                        {job.company?.name
+                          ? job.company.name.charAt(0).toUpperCase()
+                          : "C"}
+                      </div>
+                      <Badge variant="outline" className="text-slate-500 font-normal">
+                        {formatRelativeTime(job.created_at)}
+                      </Badge>
+                    </div>
+
+                    <div className="mt-4">
+                      <h3 className="text-[17px] font-bold tracking-tight text-slate-900 line-clamp-1">
+                        {job.title}
+                      </h3>
+                      <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-600">
+                        {job.company?.name || "Company"}
+                        {job.company?.is_verified && (
+                          <span
+                            title="Verified Company"
+                            className="inline-flex size-4 items-center justify-center rounded-full bg-indigo-600 text-white"
+                          >
+                            <Check className="size-2.5" />
+                          </span>
+                        )}
+                        {job.department && (
+                          <span className="text-xs text-slate-400">
+                            · {job.department}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+
+                    <div className="mt-4 flex flex-col gap-1.5 text-xs text-slate-500">
+                      <span className="flex items-center gap-2">
+                        <MapPin className="size-3.5 text-slate-400 shrink-0" />
+                        <span className="truncate">{job.location || "Remote"}</span>
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <CircleDollarSign className="size-3.5 text-slate-400 shrink-0" />
+                        <span>
+                          {formatSalary(job.salary_min, job.salary_max)} ·{" "}
+                          {formatJobType(job.job_type)}
+                        </span>
+                      </span>
+                    </div>
+
+                    <div className="mt-auto flex items-end justify-between gap-3 pt-5 border-t border-slate-50">
+                      <div className="flex flex-wrap gap-1.5 max-w-[200px]">
+                        {job.skills && job.skills.length > 0 ? (
+                          job.skills.slice(0, 3).map((skill) => (
+                            <Badge
+                              key={skill.id}
+                              variant={skill.is_required ? "secondary" : "outline"}
+                              className="text-[10px]"
+                            >
+                              {skill.skill_name}
+                            </Badge>
+                          ))
+                        ) : (
+                          <Badge variant="outline" className="text-[10px]">
+                            {job.department || "Full-time"}
+                          </Badge>
+                        )}
+                      </div>
+
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setSelectedJob(job)
+                          setResumeFile(null)
+                          setCoverLetter("")
+                          setApplyError(null)
+                        }}
+                        className="bg-indigo-600 hover:bg-indigo-700"
+                      >
+                        Apply <ChevronRight className="size-3.5 ml-1" />
+                      </Button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </main>
+        )}
+
+        {/* Recruiter Overview Fallback Tab */}
+        {activeTab === "recruiter" && (
+          <main className="mx-auto max-w-[1450px] px-5 py-7 sm:px-8 lg:px-10">
+            <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight">Hiring Performance</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Track your hiring pipeline and evaluate AI candidate match breakdowns.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-7">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <p className="text-xs font-medium text-slate-500">Active Requisitions</p>
+                <p className="mt-1 text-2xl font-bold">{jobs.length}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <p className="text-xs font-medium text-slate-500">Candidates Processed</p>
+                <p className="mt-1 text-2xl font-bold">148</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <p className="text-xs font-medium text-slate-500">Avg. Time-to-Hire</p>
+                <p className="mt-1 text-2xl font-bold">18 days</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <p className="text-xs font-medium text-slate-500">AI Match Accuracy</p>
+                <p className="mt-1 text-2xl font-bold">94.2%</p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h3 className="text-base font-bold text-slate-900 mb-4">
+                Active Job Requisitions
+              </h3>
+              <div className="divide-y divide-slate-100">
+                {jobs.map((job) => (
+                  <div key={job.id} className="py-3 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">{job.title}</p>
+                      <p className="text-xs text-slate-500">
+                        {job.company?.name} · {job.location}
+                      </p>
+                    </div>
+                    <Badge variant="success">Active</Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </main>
+        )}
       </div>
 
-      <Dialog open={postOpen} onOpenChange={setPostOpen}><DialogContent className="left-auto right-0 top-0 h-full w-full max-w-[560px] translate-x-0 translate-y-0 overflow-y-auto rounded-none rounded-l-2xl p-6 sm:p-8"><div className="mb-7"><div className="mb-3 grid size-10 place-items-center rounded-xl bg-indigo-50 text-indigo-600"><BriefcaseBusiness className="size-5" /></div><DialogTitle className="text-xl font-bold">Post a new job</DialogTitle><DialogDescription className="mt-1 text-sm text-slate-500">Create a requisition and start finding your next great hire.</DialogDescription></div><form onSubmit={publishJob} className="flex flex-col gap-5"><div className="grid gap-5 sm:grid-cols-2"><Field label="Job title" required><Input required placeholder="e.g. Senior Product Designer" /></Field><Field label="Department" required><Select><SelectTrigger><SelectValue placeholder="Select department" /></SelectTrigger><SelectContent><SelectItem value="design">Design</SelectItem><SelectItem value="engineering">Engineering</SelectItem><SelectItem value="marketing">Marketing</SelectItem><SelectItem value="customer">Customer Success</SelectItem></SelectContent></Select></Field></div><div className="grid gap-5 sm:grid-cols-2"><Field label="Job type" required><Select><SelectTrigger><SelectValue placeholder="Select job type" /></SelectTrigger><SelectContent><SelectItem value="full-time">Full-time</SelectItem><SelectItem value="contract">Contract</SelectItem><SelectItem value="remote">Remote</SelectItem></SelectContent></Select></Field><Field label="Location" required><Input required placeholder="e.g. New York, NY" /></Field></div><div><label className="mb-2 block text-xs font-bold text-slate-700">Salary range</label><div className="grid grid-cols-2 gap-3"><Input type="number" placeholder="Minimum" aria-label="Minimum salary" /><Input type="number" placeholder="Maximum" aria-label="Maximum salary" /></div></div><Field label="Job description" required><textarea required className="min-h-32 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-3 text-sm outline-none placeholder:text-slate-400 focus:border-brand focus:ring-4 focus:ring-brand/10" placeholder="Describe the role, responsibilities, and what success looks like..." /></Field><div><label className="mb-2 block text-xs font-bold text-slate-700">Required skills</label><Input value={skillInput} onChange={(event) => setSkillInput(event.target.value)} onKeyDown={addSkill} placeholder="Type a skill and press Enter" /><div className="mt-3 flex flex-wrap gap-2">{skills.map((skill) => <Badge key={skill} variant="outline" className="gap-1 border-indigo-200 bg-indigo-50 text-indigo-700">{skill}<button type="button" aria-label={`Remove ${skill}`} onClick={() => setSkills(skills.filter((item) => item !== skill))}><X className="size-3" /></button></Badge>)}</div></div><div className="mt-3 flex gap-3 border-t border-slate-100 pt-5"><Button type="button" variant="outline" className="flex-1" onClick={() => setPostOpen(false)}>Cancel</Button><Button type="submit" className="flex-1">Publish Job Requisition</Button></div></form></DialogContent></Dialog>
+      {/* Application Dialog Modal */}
+      <Dialog
+        open={!!selectedJob}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedJob(null)
+            setResumeFile(null)
+            setCoverLetter("")
+            setApplyError(null)
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <div className="mb-4">
+            <DialogTitle className="text-xl font-bold text-slate-900">
+              Apply to {selectedJob?.title}
+            </DialogTitle>
+            <DialogDescription className="mt-1 text-xs text-slate-500">
+              {selectedJob?.company?.name} · {selectedJob?.location || "Remote"}
+            </DialogDescription>
+          </div>
+
+          {applyError && (
+            <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+              <AlertCircle className="size-4 shrink-0 text-rose-500 mt-0.5" />
+              <span>{applyError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleApplySubmit} className="space-y-4">
+            {/* Selected Job Card Preview */}
+            <div className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+              <div
+                className={`grid size-10 shrink-0 place-items-center rounded-lg text-sm font-bold text-white shadow-sm ${getCompanyColor(
+                  selectedJob?.company?.name
+                )}`}
+              >
+                {selectedJob?.company?.name
+                  ? selectedJob.company.name.charAt(0).toUpperCase()
+                  : "C"}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold truncate">{selectedJob?.title}</p>
+                <p className="text-xs text-slate-500 truncate">
+                  {selectedJob?.company?.name} ·{" "}
+                  {formatSalary(selectedJob?.salary_min, selectedJob?.salary_max)}
+                </p>
+              </div>
+            </div>
+
+            {/* Resume Upload File Picker */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                Resume Document <span className="text-rose-500">*</span>
+              </label>
+
+              {!resumeFile ? (
+                <label
+                  htmlFor="resume-upload"
+                  className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 px-6 py-8 text-center transition-colors hover:border-indigo-500 hover:bg-indigo-50/20"
+                >
+                  <UploadCloud className="mb-2 size-8 text-indigo-600" />
+                  <span className="text-sm font-bold text-slate-700">
+                    Upload your resume
+                  </span>
+                  <span className="mt-1 text-xs text-slate-400">
+                    PDF or DOCX up to 5MB · Analyzed by AI parser
+                  </span>
+                  <input
+                    id="resume-upload"
+                    type="file"
+                    accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    className="sr-only"
+                    onChange={handleFileChange}
+                  />
+                </label>
+              ) : (
+                <div className="flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50/50 p-3.5">
+                  <div className="flex items-center gap-3 truncate">
+                    <FileText className="size-6 shrink-0 text-indigo-600" />
+                    <div className="truncate">
+                      <p className="text-sm font-semibold text-slate-800 truncate">
+                        {resumeFile.name}
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        {(resumeFile.size / (1024 * 1024)).toFixed(2)} MB · Ready to submit
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setResumeFile(null)}
+                    className="size-8 p-0 text-slate-400 hover:text-slate-700"
+                  >
+                    <X className="size-4" />
+                  </Button>
+                </div>
+              )}
+            </div>
+
+            {/* Optional Cover Letter */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                Cover Note <span className="text-slate-400 font-normal">(optional)</span>
+              </label>
+              <textarea
+                rows={3}
+                placeholder="Introduce yourself and briefly highlight key qualifications..."
+                value={coverLetter}
+                onChange={(e) => setCoverLetter(e.target.value)}
+                className="w-full resize-none rounded-lg border border-slate-200 bg-white p-3 text-sm outline-none placeholder:text-slate-400 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-600/10"
+              />
+            </div>
+
+            {/* Submit & Cancel Buttons */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={applyMutation.isPending}
+                onClick={() => setSelectedJob(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={applyMutation.isPending || !resumeFile}
+                className="bg-indigo-600 hover:bg-indigo-700 gap-2 min-w-36"
+              >
+                {applyMutation.isPending ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Submitting...
+                  </>
+                ) : (
+                  "Submit Application"
+                )}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
-
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) { return <div><label className="mb-2 block text-xs font-bold text-slate-700">{label}{required && <span className="ml-1 text-rose-500">*</span>}</label>{children}</div> }
-function NavItem({ icon: Icon, label, active, expanded, count }: { icon: IconType; label: string; active?: boolean; expanded: boolean; count?: string }) { return <button className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold ${active ? "bg-indigo-50 text-indigo-700" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"}`}><Icon className="size-5 shrink-0" />{expanded && <><span className="flex-1 text-left">{label}</span>{count && <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] text-indigo-700">{count}</span>}</>}</button> }
-function Metric({ label, value, note, icon: Icon }: { label: string; value: string; note: string; icon: IconType }) { return <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div className="grid size-10 shrink-0 place-items-center rounded-xl bg-indigo-50 text-indigo-600"><Icon className="size-5" /></div><div><p className="text-xs font-medium text-slate-500">{label}</p><div className="mt-0.5 flex items-baseline gap-2"><p className="text-xl font-bold">{value}</p><p className="text-[11px] font-medium text-emerald-600">{note}</p></div></div></div> }
 
 export default App
