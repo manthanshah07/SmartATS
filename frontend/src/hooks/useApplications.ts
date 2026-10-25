@@ -114,3 +114,30 @@ export function useUpdateApplicationStatus() {
     },
   })
 }
+
+export interface TransitionApplicationParams {
+  applicationId: string
+  targetStage: ApplicationStatus
+  notes?: string
+}
+
+export function useTransitionApplication() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({
+      applicationId,
+      targetStage,
+      notes,
+    }: TransitionApplicationParams) => {
+      const response = await api.post(`/applications/${applicationId}/transition/`, {
+        target_stage: targetStage,
+        notes: notes || `Transitioned to ${targetStage}`,
+      })
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["applications"] })
+    },
+  })
+}

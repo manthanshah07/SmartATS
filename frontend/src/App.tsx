@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom"
 import AuthGuard from "./components/AuthGuard"
 import Login from "./pages/Auth/Login"
 import Register from "./pages/Auth/Register"
+import CandidateApplications from "./pages/CandidateApplications"
 import CandidateJobs from "./pages/CandidateJobs"
 import Landing from "./pages/Landing"
 import RecruiterPipeline from "./pages/RecruiterPipeline"
@@ -30,12 +31,20 @@ export default function App(): React.ReactElement {
           element={<Navigate to="/recruiter/pipeline" replace />}
         />
 
-        {/* Protected Candidate Portal Route */}
+        {/* Protected Candidate Portal Routes */}
         <Route
           path="/candidate/jobs"
           element={
             <AuthGuard allowedRoles={["CANDIDATE", "ADMIN", "RECRUITER"]}>
               <CandidateJobs />
+            </AuthGuard>
+          }
+        />
+        <Route
+          path="/candidate/applications"
+          element={
+            <AuthGuard allowedRoles={["CANDIDATE", "ADMIN"]}>
+              <CandidateApplications />
             </AuthGuard>
           }
         />

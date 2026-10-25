@@ -68,6 +68,24 @@ class ResumeSerializer(serializers.ModelSerializer):
                 f"Unsupported MIME type '{content_type}'. Must be PDF or DOCX."
             )
 
+        # 4. Validate file header magic bytes
+        try:
+            file_obj.seek(0)
+            header = file_obj.read(8)
+            file_obj.seek(0)
+        except Exception:
+            raise serializers.ValidationError("Unable to inspect uploaded file header.")
+
+        if ext == ".pdf" and not header.startswith(b"%PDF-"):
+            raise serializers.ValidationError(
+                "Invalid PDF file: file signature does not match PDF specification."
+            )
+        elif ext == ".docx" and not header.startswith(b"PK\x03\x04"):
+            raise serializers.ValidationError(
+                "Invalid DOCX file: file signature does not match "
+                "Office Open XML specification."
+            )
+
         return file_obj
 
     def create(self, validated_data):

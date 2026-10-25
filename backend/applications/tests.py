@@ -249,6 +249,59 @@ class ApplicationsAPITestCase(TestCase):
         self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("file", res.data)
 
+    def test_resume_upload_spoofed_pdf_magic_bytes_rejected(self):
+        self.authenticate(self.candidate)
+        spoofed_pdf = SimpleUploadedFile(
+            "spoofed.pdf",
+            b"PLAIN_TEXT_NOT_A_REAL_PDF",
+            content_type="application/pdf",
+        )
+        res = self.client.post(
+            "/api/resumes/",
+            {"file": spoofed_pdf},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("file", res.data)
+        self.assertIn("PDF specification", str(res.data["file"]))
+
+    def test_resume_upload_spoofed_docx_magic_bytes_rejected(self):
+        self.authenticate(self.candidate)
+        spoofed_docx = SimpleUploadedFile(
+            "spoofed.docx",
+            b"NOT_A_ZIP_ARCHIVE",
+            content_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            ),
+        )
+        res = self.client.post(
+            "/api/resumes/",
+            {"file": spoofed_docx},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("file", res.data)
+        self.assertIn("Office Open XML specification", str(res.data["file"]))
+
+    def test_resume_upload_valid_docx_magic_bytes_accepted(self):
+        self.authenticate(self.candidate)
+        valid_docx = SimpleUploadedFile(
+            "valid.docx",
+            b"PK\x03\x04mock docx archive payload",
+            content_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "wordprocessingml.document"
+            ),
+        )
+        res = self.client.post(
+            "/api/resumes/",
+            {"file": valid_docx},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data["original_filename"], "valid.docx")
+
     def test_resume_upload_size_exceeded(self):
         self.authenticate(self.candidate)
         large_content = b"0" * (6 * 1024 * 1024)  # 6MB
@@ -423,6 +476,46 @@ class ApplicationsAPITestCase(TestCase):
 
         app.refresh_from_db()
         self.assertEqual(app.status, Application.Status.WITHDRAWN)
+
+    def test_candidate_can_withdraw_via_transition_endpoint(self):
+        app = Application.objects.create(
+            job=self.job,
+            candidate=self.candidate,
+            resume=self.resume,
+            status=Application.Status.APPLIED,
+        )
+        self.authenticate(self.candidate)
+
+        res = self.client.post(
+            f"/api/applications/{app.id}/transition/",
+            {"target_stage": "WITHDRAWN", "notes": "No longer interested."},
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["status"], "WITHDRAWN")
+
+        app.refresh_from_db()
+        self.assertEqual(app.status, Application.Status.WITHDRAWN)
+
+    def test_candidate_cannot_transition_to_other_stages(self):
+        app = Application.objects.create(
+            job=self.job,
+            candidate=self.candidate,
+            resume=self.resume,
+            status=Application.Status.APPLIED,
+        )
+        self.authenticate(self.candidate)
+
+        res = self.client.post(
+            f"/api/applications/{app.id}/transition/",
+            {"target_stage": "SHORTLISTED"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertIn(
+            "Candidates can only transition applications to WITHDRAWN",
+            res.data["detail"],
+        )
 
 
 class AIMatchingPipelineTestCase(TestCase):

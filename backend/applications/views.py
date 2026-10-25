@@ -1,3 +1,4 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Count
 from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
@@ -94,6 +95,63 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             return queryset.filter(job__recruiter=user)
 
         return Application.objects.none()
+
+    @action(detail=True, methods=["post"])
+    def transition(self, request, id=None):
+        """
+        Transition an application's stage.
+        Accepts: target_stage (or target_status / status), notes.
+        Allows candidates to withdraw their application.
+        Allows recruiters to advance/reject applications.
+        """
+        application = self.get_object()
+        target_stage = (
+            request.data.get("target_stage")
+            or request.data.get("target_status")
+            or request.data.get("status")
+        )
+        if not target_stage:
+            return Response(
+                {"detail": "target_stage is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if (
+            request.user.role == User.Role.CANDIDATE
+            and target_stage != Application.Status.WITHDRAWN
+        ):
+            return Response(
+                {"detail": "Candidates can only transition applications to WITHDRAWN."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if (
+            request.user.role == User.Role.CANDIDATE
+            and application.candidate != request.user
+        ):
+            return Response(
+                {"detail": "You cannot withdraw another candidate's application."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        notes = request.data.get("notes", f"Transitioned to {target_stage}.")
+        try:
+            ApplicationStateMachine.transition(
+                application=application,
+                new_status=target_stage,
+                changed_by=request.user,
+                notes=notes,
+            )
+        except DjangoValidationError as e:
+            return Response(
+                {"detail": str(e.message)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            ApplicationSerializer(application).data,
+            status=status.HTTP_200_OK,
+        )
 
     @action(detail=True, methods=["post"])
     def withdraw(self, request, id=None):

@@ -184,19 +184,42 @@ export default function CandidateJobs(): React.ReactElement {
   return (
     <div className="min-h-screen bg-[#f7f8fc] text-slate-900">
       {/* Top Navbar */}
-      <header className="sticky top-0 z-20 flex h-[76px] items-center justify-between border-b border-slate-200 bg-white px-5 sm:px-8">
-        <div className="flex items-center gap-3">
-          <div className="grid size-9 place-items-center rounded-xl bg-indigo-600 text-white shadow-sm">
-            <BriefcaseBusiness className="size-5" />
+      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white/95 px-5 backdrop-blur-md sm:px-8 lg:px-10">
+        <div className="flex items-center gap-8">
+          <div
+            onClick={() => navigate("/candidate/jobs")}
+            className="flex items-center gap-3 cursor-pointer group"
+          >
+            <div className="grid size-10 place-items-center rounded-xl bg-indigo-600 text-white shadow-sm transition-transform group-hover:scale-105">
+              <BriefcaseBusiness className="size-5" />
+            </div>
+            <div>
+              <span className="text-lg font-bold tracking-tight">
+                Smart<span className="text-indigo-600">ATS</span>
+              </span>
+              <span className="ml-2 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                Candidate Portal
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="text-lg font-bold tracking-tight">
-              Smart<span className="text-indigo-600">ATS</span>
-            </span>
-            <span className="ml-2 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
-              Candidate Portal
-            </span>
-          </div>
+
+          {/* Desktop Navigation Links */}
+          <nav className="hidden md:flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => navigate("/candidate/jobs")}
+              className="rounded-lg bg-indigo-50/90 px-3.5 py-1.5 text-xs font-bold text-indigo-700 transition-colors"
+            >
+              Browse Jobs
+            </button>
+            <button
+              type="button"
+              onClick={() => navigate("/candidate/applications")}
+              className="rounded-lg px-3.5 py-1.5 text-xs font-semibold text-slate-600 hover:text-indigo-600 hover:bg-slate-50 transition-colors"
+            >
+              My Applications
+            </button>
+          </nav>
         </div>
 
         <div className="flex items-center gap-3">
@@ -205,7 +228,7 @@ export default function CandidateJobs(): React.ReactElement {
               variant="outline"
               size="sm"
               onClick={() => navigate("/recruiter/pipeline")}
-              className="text-xs gap-1.5"
+              className="hidden sm:inline-flex text-xs gap-1.5 border-slate-200"
             >
               <Kanban className="size-3.5 text-indigo-600" /> Recruiter Pipeline
             </Button>
@@ -215,23 +238,23 @@ export default function CandidateJobs(): React.ReactElement {
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className="flex items-center gap-2 rounded-full p-1.5 hover:bg-slate-50"
+                className="flex items-center gap-2 rounded-full p-1.5 hover:bg-slate-100/70 transition-colors"
               >
                 <div className="grid size-9 place-items-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-700">
                   {userInitials}
                 </div>
                 <div className="hidden text-left sm:block">
-                  <p className="text-sm font-semibold truncate max-w-[140px]">
+                  <p className="text-xs font-semibold text-slate-800 truncate max-w-[130px]">
                     {userDisplayName}
                   </p>
-                  <p className="text-[11px] text-slate-400 capitalize">
+                  <p className="text-[10px] text-slate-400 capitalize">
                     {currentUser?.role?.toLowerCase() || "Candidate"}
                   </p>
                 </div>
                 <ChevronRight className="hidden size-4 rotate-90 text-slate-400 sm:block" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuContent align="end" className="w-56">
               <div className="px-3 py-2 border-b border-slate-100">
                 <p className="text-xs font-semibold text-slate-900 truncate">
                   {currentUser?.email || "candidate@test.com"}
@@ -240,16 +263,34 @@ export default function CandidateJobs(): React.ReactElement {
                   Role: {currentUser?.role || "CANDIDATE"}
                 </p>
               </div>
+              <DropdownMenuItem
+                onClick={() => navigate("/candidate/jobs")}
+                className="cursor-pointer text-xs font-semibold text-indigo-600"
+              >
+                <BriefcaseBusiness className="mr-2 size-3.5 text-indigo-600" />
+                Browse Jobs
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => navigate("/candidate/applications")}
+                className="cursor-pointer text-xs"
+              >
+                <FileText className="mr-2 size-3.5 text-slate-500" />
+                My Applications
+              </DropdownMenuItem>
               {isRecruiter && (
-                <DropdownMenuItem onClick={() => navigate("/recruiter/pipeline")}>
+                <DropdownMenuItem
+                  onClick={() => navigate("/recruiter/pipeline")}
+                  className="cursor-pointer text-xs"
+                >
+                  <Kanban className="mr-2 size-3.5 text-slate-500" />
                   Recruiter Workspace
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem
                 onClick={() => logoutUser(navigate)}
-                className="text-rose-600 focus:text-rose-700 font-semibold cursor-pointer"
+                className="text-rose-600 focus:text-rose-700 font-semibold cursor-pointer text-xs border-t border-slate-100 mt-1"
               >
-                <LogOut className="mr-2 size-4" /> Sign out
+                <LogOut className="mr-2 size-3.5" /> Sign out
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

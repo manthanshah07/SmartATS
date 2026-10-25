@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "django_filters",
+    "storages",
     # Local Apps
     "core.apps.CoreConfig",
     "accounts.apps.AccountsConfig",
@@ -152,6 +153,39 @@ os.makedirs(STATIC_ROOT, exist_ok=True)
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 MAX_UPLOAD_SIZE = 5 * 1024 * 1024  # 5MB max upload size
+
+# Pluggable Cloud Storage Configuration (Local FileSystem vs AWS S3)
+USE_S3 = os.getenv("USE_S3", "False").lower() in ("true", "1", "yes")
+AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME")
+
+if USE_S3 or AWS_STORAGE_BUCKET_NAME:
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+            "OPTIONS": {
+                "bucket_name": AWS_STORAGE_BUCKET_NAME,
+                "region_name": os.getenv("AWS_S3_REGION_NAME", "us-east-1"),
+                "access_key": os.getenv("AWS_ACCESS_KEY_ID"),
+                "secret_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
+                "querystring_auth": True,  # Generate secure signed URLs
+                "querystring_expire": int(os.getenv("AWS_QUERYSTRING_EXPIRE", "3600")),
+                "file_overwrite": False,
+                "default_acl": "private",
+            },
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
+else:
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
