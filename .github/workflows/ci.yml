@@ -38,4 +38,4 @@ jobs:
       - name: Run Django test suite
         run: |
           cd backend
-          python manage.py test accounts
+          python manage.py test

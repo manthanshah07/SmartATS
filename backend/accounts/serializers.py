@@ -55,6 +55,7 @@ class RecruiterProfileSerializer(serializers.ModelSerializer):
         model = RecruiterProfile
         fields = [
             "id",
+            "company",
             "company_name",
             "title",
             "department",
