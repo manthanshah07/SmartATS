@@ -54,6 +54,7 @@ import {
   useApplications,
   useUpdateApplicationStatus,
 } from "../hooks/useApplications"
+import { useScheduleInterview } from "../hooks/useInterviews"
 import {
   useCompanies,
   useCreateJob,
@@ -210,6 +211,83 @@ export default function RecruiterPipeline(): React.ReactElement {
   } = useAnalytics()
 
   const createJobMutation = useCreateJob()
+
+  // Interview Scheduling State
+  const [scheduleModalOpen, setScheduleModalOpen] = useState<boolean>(false)
+  const [schedulingApp, setSchedulingApp] = useState<Application | null>(null)
+  const [interviewType, setInterviewType] = useState<string>("Technical")
+  const [scheduledAt, setScheduledAt] = useState<string>("")
+  const [meetingLocation, setMeetingLocation] = useState<string>("https://meet.google.com/interview-room")
+  const [scheduleError, setScheduleError] = useState<string | null>(null)
+
+  const scheduleInterviewMutation = useScheduleInterview()
+
+  const handleOpenScheduleModal = (app: Application) => {
+    setSchedulingApp(app)
+    setInterviewType("Technical")
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    tomorrow.setHours(10, 0, 0, 0)
+    const isoString = new Date(tomorrow.getTime() - tomorrow.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 16)
+    setScheduledAt(isoString)
+    setMeetingLocation("https://meet.google.com/smartats-interview")
+    setScheduleError(null)
+    setScheduleModalOpen(true)
+  }
+
+  const handleSubmitSchedule = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!schedulingApp || !scheduledAt) {
+      setScheduleError("Please select a date and time for the interview.")
+      return
+    }
+
+    try {
+      const start = new Date(scheduledAt)
+      if (isNaN(start.getTime())) {
+        setScheduleError("Please enter a valid date and time.")
+        return
+      }
+      const end = new Date(start.getTime() + 60 * 60 * 1000)
+
+      await scheduleInterviewMutation.mutateAsync({
+        application_id: schedulingApp.id,
+        round_name: `${interviewType} Round`,
+        scheduled_start: start.toISOString(),
+        scheduled_end: end.toISOString(),
+        meeting_url: meetingLocation || undefined,
+      })
+
+      if (schedulingApp.status === "SHORTLISTED") {
+        await updateStatusMutation.mutateAsync({
+          applicationId: schedulingApp.id,
+          newStatus: "INTERVIEW_SCHEDULED",
+          notes: `Interview scheduled: ${interviewType}`,
+        })
+      }
+
+      setToastNotice(
+        `Interview successfully scheduled with ${schedulingApp.candidate_email}!`
+      )
+      setScheduleModalOpen(false)
+      setSchedulingApp(null)
+    } catch (err: unknown) {
+      let msg = "Failed to schedule interview."
+      if (axios.isAxiosError(err)) {
+        const data = err.response?.data as Record<string, any> | undefined
+        if (data?.detail) {
+          msg = String(data.detail)
+        } else if (data?.application_id) {
+          msg = String(data.application_id[0] || data.application_id)
+        } else if (data?.scheduled_end) {
+          msg = String(data.scheduled_end[0] || data.scheduled_end)
+        }
+      }
+      setScheduleError(msg)
+    }
+  }
 
   // Safeguard: Automatically select recruiter's company or first verified company
   useEffect(() => {
@@ -766,10 +844,25 @@ export default function RecruiterPipeline(): React.ReactElement {
                                   </div>
 
                                   <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-[11px] font-semibold">
-                                    <span className="flex items-center gap-1 text-indigo-600">
-                                      <Sparkles className="size-3" />
-                                      AI Insights
-                                    </span>
+                                    {app.status === "SHORTLISTED" ||
+                                    app.status === "INTERVIEW_SCHEDULED" ? (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleOpenScheduleModal(app)
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 hover:bg-indigo-100 transition-colors"
+                                      >
+                                        <CalendarDays className="size-3" />
+                                        Schedule
+                                      </button>
+                                    ) : (
+                                      <span className="flex items-center gap-1 text-indigo-600">
+                                        <Sparkles className="size-3" />
+                                        AI Insights
+                                      </span>
+                                    )}
 
                                     {nextStatus && (
                                       <button
@@ -1265,6 +1358,22 @@ export default function RecruiterPipeline(): React.ReactElement {
                     Close
                   </Button>
 
+                  {(selectedApplication.status === "SHORTLISTED" ||
+                    selectedApplication.status === "INTERVIEW_SCHEDULED") && (
+                    <Button
+                      variant="outline"
+                      className="text-xs border-indigo-200 text-indigo-700 bg-indigo-50/70 hover:bg-indigo-100 gap-1.5"
+                      onClick={() => {
+                        const app = selectedApplication
+                        setSelectedApplication(null)
+                        handleOpenScheduleModal(app)
+                      }}
+                    >
+                      <CalendarDays className="size-3.5" />
+                      Schedule Interview
+                    </Button>
+                  )}
+
                   {NEXT_STATUS[selectedApplication.status] && (
                     <Button
                       className="bg-indigo-600 hover:bg-indigo-700 text-xs"
@@ -1483,6 +1592,114 @@ export default function RecruiterPipeline(): React.ReactElement {
                 ) : (
                   "Publish Requisition"
                 )}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===================== INTERVIEW SCHEDULING MODAL ===================== */}
+      <Dialog open={scheduleModalOpen} onOpenChange={setScheduleModalOpen}>
+        <DialogContent className="max-w-[480px]">
+          <div className="flex items-center gap-3">
+            <div className="grid size-10 place-items-center rounded-xl bg-indigo-100 text-indigo-700 shadow-xs">
+              <CalendarDays className="size-5" />
+            </div>
+            <div>
+              <DialogTitle className="text-lg font-bold text-slate-900">
+                Schedule Interview
+              </DialogTitle>
+              <DialogDescription className="mt-0.5 text-xs text-slate-500">
+                Coordinate an interview round with {schedulingApp?.candidate_email}
+              </DialogDescription>
+            </div>
+          </div>
+
+          <form onSubmit={handleSubmitSchedule} className="mt-4 space-y-4">
+            {scheduleError && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5 text-xs text-rose-700 font-medium">
+                {scheduleError}
+              </div>
+            )}
+
+            {/* Target Requisition Context */}
+            <div className="rounded-xl bg-slate-50 p-3 border border-slate-200/60 text-xs">
+              <p className="text-[11px] text-slate-400 font-medium">Position</p>
+              <p className="font-bold text-slate-900 mt-0.5">{schedulingApp?.job.title}</p>
+              <p className="text-slate-500 text-[11px] mt-0.5">{schedulingApp?.candidate_email}</p>
+            </div>
+
+            {/* Interview Type */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Interview Type
+              </label>
+              <Select value={interviewType} onValueChange={setInterviewType}>
+                <SelectTrigger className="text-xs">
+                  <SelectValue placeholder="Select interview type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Screening">Initial Screening (HR / Culture)</SelectItem>
+                  <SelectItem value="Technical">Technical Architecture & Coding</SelectItem>
+                  <SelectItem value="Behavioral">Leadership & Behavioral</SelectItem>
+                  <SelectItem value="Final">Executive / Final Round</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Scheduled Date & Time */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Date & Time (Scheduled Start)
+              </label>
+              <Input
+                type="datetime-local"
+                value={scheduledAt}
+                onChange={(e) => setScheduledAt(e.target.value)}
+                className="text-xs"
+                required
+              />
+              <p className="mt-1 text-[10px] text-slate-400">
+                Duration defaults to 60 minutes. Candidate will be notified via email & in-app.
+              </p>
+            </div>
+
+            {/* Meeting URL or Location */}
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                Meeting Link / Location
+              </label>
+              <Input
+                type="text"
+                placeholder="https://meet.google.com/xyz-1234-uvw or Office address"
+                value={meetingLocation}
+                onChange={(e) => setMeetingLocation(e.target.value)}
+                className="text-xs"
+              />
+            </div>
+
+            {/* Buttons */}
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={scheduleInterviewMutation.isPending}
+                onClick={() => setScheduleModalOpen(false)}
+                className="text-xs"
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={scheduleInterviewMutation.isPending}
+                className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white gap-2"
+              >
+                {scheduleInterviewMutation.isPending && (
+                  <Loader2 className="size-3.5 animate-spin" />
+                )}
+                Confirm Schedule
               </Button>
             </div>
           </form>
