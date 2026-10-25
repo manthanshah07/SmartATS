@@ -203,22 +203,32 @@ class RecruiterAnalyticsViewSet(viewsets.ViewSet):
         if user.role == User.Role.ADMIN or user.is_staff or user.is_superuser:
             jobs_qs = Job.objects.all()
         else:
-            jobs_qs = Job.objects.filter(recruiter=user)
-
-        active_jobs = jobs_qs.filter(is_active=True).select_related("company")
-
-        # 1. Total applicants per active job
-        applicants_per_job = []
-        for job in active_jobs:
-            total_apps = job.applications.count()
-            applicants_per_job.append(
-                {
-                    "job_id": str(job.id),
-                    "job_title": job.title,
-                    "company_name": job.company.name if job.company else None,
-                    "total_applicants": total_apps,
-                }
+            recruiter_company = (
+                user.recruiter_profile.company
+                if hasattr(user, "recruiter_profile")
+                else None
             )
+            if recruiter_company:
+                jobs_qs = Job.objects.filter(company=recruiter_company)
+            else:
+                jobs_qs = Job.objects.filter(recruiter=user)
+
+        # 1. Total applicants per active job using single-pass ORM aggregation
+        active_jobs = (
+            jobs_qs.filter(is_active=True)
+            .select_related("company")
+            .annotate(total_applicants_count=Count("applications"))
+        )
+
+        applicants_per_job = [
+            {
+                "job_id": str(job.id),
+                "job_title": job.title,
+                "company_name": job.company.name if job.company else None,
+                "total_applicants": job.total_applicants_count,
+            }
+            for job in active_jobs
+        ]
 
         # 2. Applicant status funnel
         relevant_applications = Application.objects.filter(job__in=jobs_qs)
@@ -229,21 +239,22 @@ class RecruiterAnalyticsViewSet(viewsets.ViewSet):
 
         funnel_breakdown = [{"status": k, "count": v} for k, v in funnel_counts.items()]
 
-        # 3. Average time-to-hire (days) for applications that reached OFFERED or HIRED
+        # 3. Average time-to-hire (days) with prefetch to avoid N+1 queries
         hired_apps = relevant_applications.filter(
             status__in=[Application.Status.OFFERED, Application.Status.HIRED]
-        )
+        ).prefetch_related("status_history")
         time_to_hire_list = []
         for app in hired_apps:
-            history_record = (
-                app.status_history.filter(
-                    new_status__in=[
-                        Application.Status.OFFERED,
-                        Application.Status.HIRED,
-                    ]
-                )
-                .order_by("created_at")
-                .first()
+            history_record = next(
+                (
+                    h
+                    for h in sorted(
+                        app.status_history.all(), key=lambda h: h.created_at
+                    )
+                    if h.new_status
+                    in [Application.Status.OFFERED, Application.Status.HIRED]
+                ),
+                None,
             )
             if history_record:
                 duration_days = (
@@ -264,9 +275,7 @@ class RecruiterAnalyticsViewSet(viewsets.ViewSet):
         # 4. Average time-in-stage (days)
         stage_times = {st: [] for st in Application.Status.values}
         histories = (
-            ApplicationStatusHistory.objects.filter(
-                application__in=relevant_applications
-            )
+            ApplicationStatusHistory.objects.filter(application__job__in=jobs_qs)
             .select_related("application")
             .order_by("application_id", "created_at")
         )
@@ -291,8 +300,8 @@ class RecruiterAnalyticsViewSet(viewsets.ViewSet):
         }
 
         data = {
-            "total_active_jobs": active_jobs.count(),
-            "total_applications": relevant_applications.count(),
+            "total_active_jobs": len(applicants_per_job),
+            "total_applications": sum(funnel_counts.values()),
             "applicants_per_job": applicants_per_job,
             "status_funnel": funnel_counts,
             "funnel_breakdown": funnel_breakdown,

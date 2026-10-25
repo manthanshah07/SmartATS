@@ -35,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/primitives"
+import NotificationBell from "../components/NotificationBell"
 import {
   formatJobType,
   formatSalary,
@@ -233,6 +234,8 @@ export default function CandidateJobs(): React.ReactElement {
               <Kanban className="size-3.5 text-indigo-600" /> Recruiter Pipeline
             </Button>
           )}
+
+          <NotificationBell />
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

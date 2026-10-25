@@ -8,8 +8,11 @@ from django.contrib import admin
 from django.urls import include, path
 
 from applications.views import RecruiterAnalyticsViewSet
+from smartats.views import healthz
 
 urlpatterns = [
+    path("healthz", healthz, name="healthz"),
+    path("healthz/", healthz, name="healthz-slash"),
     path("admin/", admin.site.urls),
     path("api/auth/", include("accounts.urls")),
     path("api/", include("jobs.urls")),

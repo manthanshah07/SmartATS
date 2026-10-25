@@ -83,20 +83,26 @@ class ApplicationStateMachine:
         """
         Executes a validated state transition, saves the application,
         and logs an immutable ApplicationStatusHistory audit record.
+        Acquires row-level lock via select_for_update() to prevent race conditions.
         """
-        old_status = application.status
+        locked_application = Application.objects.select_for_update().get(
+            id=application.id
+        )
+        old_status = locked_application.status
         cls.validate_transition(old_status, new_status)
 
         if old_status != new_status:
-            application.status = new_status
-            application.save(update_fields=["status", "updated_at"])
+            locked_application.status = new_status
+            locked_application.save(update_fields=["status", "updated_at"])
 
             ApplicationStatusHistory.objects.create(
-                application=application,
+                application=locked_application,
                 changed_by=changed_by,
                 old_status=old_status,
                 new_status=new_status,
                 notes=notes,
             )
 
+        application.status = locked_application.status
+        application.updated_at = locked_application.updated_at
         return application

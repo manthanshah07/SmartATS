@@ -517,6 +517,27 @@ class ApplicationsAPITestCase(TestCase):
             res.data["detail"],
         )
 
+    def test_recruiter_analytics_endpoint(self):
+        Application.objects.create(
+            job=self.job,
+            candidate=self.candidate,
+            resume=self.resume,
+            status=Application.Status.APPLIED,
+        )
+        self.authenticate(self.recruiter)
+        res = self.client.get("/api/analytics/recruiter/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["total_active_jobs"], 1)
+        self.assertEqual(res.data["total_applications"], 1)
+        self.assertIn("applicants_per_job", res.data)
+        self.assertIn("status_funnel", res.data)
+        self.assertEqual(res.data["status_funnel"]["APPLIED"], 1)
+
+    def test_candidate_forbidden_from_analytics(self):
+        self.authenticate(self.candidate)
+        res = self.client.get("/api/analytics/recruiter/")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
 
 class AIMatchingPipelineTestCase(TestCase):
     def setUp(self):

@@ -55,3 +55,8 @@ class NotificationViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
+
+    @action(detail=False, methods=["post"], url_path="mark-read")
+    def mark_read(self, request):
+        """Alias for mark-all-read."""
+        return self.mark_all_as_read(request)

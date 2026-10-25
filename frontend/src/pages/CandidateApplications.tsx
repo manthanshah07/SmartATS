@@ -36,6 +36,7 @@ import {
   DropdownMenuTrigger,
   Input,
 } from "../components/ui/primitives"
+import NotificationBell from "../components/NotificationBell"
 import {
   Application,
   ApplicationStatus,
@@ -291,6 +292,8 @@ export default function CandidateApplications(): React.ReactElement {
               <Kanban className="size-3.5 text-indigo-600" /> Recruiter Pipeline
             </Button>
           )}
+
+          <NotificationBell />
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

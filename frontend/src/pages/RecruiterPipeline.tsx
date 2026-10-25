@@ -46,6 +46,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/primitives"
+import NotificationBell from "../components/NotificationBell"
 import { useAnalytics } from "../hooks/useAnalytics"
 import {
   Application,
@@ -513,10 +514,7 @@ export default function RecruiterPipeline(): React.ReactElement {
               <Plus className="size-3.5" /> Post New Job
             </Button>
 
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell className="size-5 text-slate-500" />
-              <span className="absolute right-2.5 top-2 size-1.5 rounded-full bg-rose-500 ring-2 ring-white" />
-            </Button>
+            <NotificationBell />
 
             {/* Profile Dropdown */}
             <DropdownMenu>
