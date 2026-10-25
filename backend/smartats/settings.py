@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     # Local Apps
     "accounts.apps.AccountsConfig",
     "jobs.apps.JobsConfig",
+    "applications.apps.ApplicationsConfig",
 ]
 
 MIDDLEWARE = [
@@ -132,8 +133,9 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Media files
-MEDIA_URL = "media/"
+MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+MAX_UPLOAD_SIZE = 5 * 1024 * 1024  # 5MB max upload size
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

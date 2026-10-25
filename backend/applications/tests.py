@@ -1,0 +1,424 @@
+from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase
+from rest_framework import status
+from rest_framework.test import APIClient
+from rest_framework_simplejwt.tokens import RefreshToken
+from accounts.models import User
+from applications.models import Application, Resume
+from applications.services import ApplicationStateMachine
+from jobs.models import Company, Job
+
+
+class StateMachineTestCase(TestCase):
+    def setUp(self):
+        self.candidate = User.objects.create_user(
+            email="candidate@sm.com",
+            password="Password123!",
+            role=User.Role.CANDIDATE,
+        )
+        self.recruiter = User.objects.create_user(
+            email="recruiter@sm.com",
+            password="Password123!",
+            role=User.Role.RECRUITER,
+        )
+        self.company = Company.objects.create(name="State Tech", is_verified=True)
+        self.job = Job.objects.create(
+            company=self.company,
+            recruiter=self.recruiter,
+            title="Systems Engineer",
+            description="Systems engineering role.",
+        )
+        self.resume = Resume.objects.create(
+            candidate=self.candidate,
+            file=SimpleUploadedFile(
+                "resume.pdf", b"%PDF-1.4 dummy", content_type="application/pdf"
+            ),
+            original_filename="resume.pdf",
+            file_size=15,
+            mime_type="application/pdf",
+        )
+        self.app = Application.objects.create(
+            job=self.job,
+            candidate=self.candidate,
+            resume=self.resume,
+            status=Application.Status.APPLIED,
+        )
+
+    def test_valid_sequential_transitions(self):
+        # APPLIED -> SCREENING
+        ApplicationStateMachine.transition(
+            self.app,
+            Application.Status.SCREENING,
+            changed_by=self.recruiter,
+            notes="Resume screened.",
+        )
+        self.assertEqual(self.app.status, Application.Status.SCREENING)
+
+        # SCREENING -> SHORTLISTED
+        ApplicationStateMachine.transition(
+            self.app,
+            Application.Status.SHORTLISTED,
+            changed_by=self.recruiter,
+        )
+        self.assertEqual(self.app.status, Application.Status.SHORTLISTED)
+
+        # SHORTLISTED -> INTERVIEW_SCHEDULED
+        ApplicationStateMachine.transition(
+            self.app,
+            Application.Status.INTERVIEW_SCHEDULED,
+            changed_by=self.recruiter,
+        )
+        self.assertEqual(self.app.status, Application.Status.INTERVIEW_SCHEDULED)
+
+        # INTERVIEW_SCHEDULED -> OFFERED
+        ApplicationStateMachine.transition(
+            self.app,
+            Application.Status.OFFERED,
+            changed_by=self.recruiter,
+        )
+        self.assertEqual(self.app.status, Application.Status.OFFERED)
+
+        # OFFERED -> HIRED
+        ApplicationStateMachine.transition(
+            self.app,
+            Application.Status.HIRED,
+            changed_by=self.recruiter,
+        )
+        self.assertEqual(self.app.status, Application.Status.HIRED)
+
+        # Verify audit history length
+        self.assertEqual(self.app.status_history.count(), 5)
+
+    def test_invalid_leap_from_applied_to_offered(self):
+        with self.assertRaises(ValidationError) as ctx:
+            ApplicationStateMachine.transition(
+                self.app,
+                Application.Status.OFFERED,
+                changed_by=self.recruiter,
+            )
+        self.assertIn("Illegal state transition", str(ctx.exception))
+
+    def test_withdrawal_from_non_final_state(self):
+        # APPLIED -> WITHDRAWN
+        ApplicationStateMachine.transition(
+            self.app,
+            Application.Status.WITHDRAWN,
+            changed_by=self.candidate,
+            notes="Candidate accepted another offer.",
+        )
+        self.assertEqual(self.app.status, Application.Status.WITHDRAWN)
+
+        # Attempt to transition from terminal WITHDRAWN -> SCREENING should fail
+        with self.assertRaises(ValidationError):
+            ApplicationStateMachine.transition(
+                self.app,
+                Application.Status.SCREENING,
+                changed_by=self.recruiter,
+            )
+
+    def test_rejection_from_screening_state(self):
+        ApplicationStateMachine.transition(
+            self.app,
+            Application.Status.SCREENING,
+            changed_by=self.recruiter,
+        )
+        ApplicationStateMachine.transition(
+            self.app,
+            Application.Status.REJECTED,
+            changed_by=self.recruiter,
+            notes="Skills do not match requirements.",
+        )
+        self.assertEqual(self.app.status, Application.Status.REJECTED)
+
+        # Attempt to transition from terminal REJECTED state
+        with self.assertRaises(ValidationError):
+            ApplicationStateMachine.transition(
+                self.app,
+                Application.Status.SHORTLISTED,
+                changed_by=self.recruiter,
+            )
+
+
+class ApplicationsAPITestCase(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+        # Users
+        self.candidate = User.objects.create_user(
+            email="candidate@apptest.com",
+            password="Password123!",
+            role=User.Role.CANDIDATE,
+        )
+        self.other_candidate = User.objects.create_user(
+            email="other@apptest.com",
+            password="Password123!",
+            role=User.Role.CANDIDATE,
+        )
+        self.recruiter = User.objects.create_user(
+            email="recruiter@apptest.com",
+            password="Password123!",
+            role=User.Role.RECRUITER,
+        )
+        self.unrelated_recruiter = User.objects.create_user(
+            email="unrelated@apptest.com",
+            password="Password123!",
+            role=User.Role.RECRUITER,
+        )
+
+        # Companies
+        self.company = Company.objects.create(name="Nexus Tech", is_verified=True)
+        self.other_company = Company.objects.create(name="Other Corp", is_verified=True)
+
+        # Associate recruiters with companies
+        self.recruiter.recruiter_profile.company = self.company
+        self.recruiter.recruiter_profile.save()
+        self.unrelated_recruiter.recruiter_profile.company = self.other_company
+        self.unrelated_recruiter.recruiter_profile.save()
+
+        # Job
+        self.job = Job.objects.create(
+            company=self.company,
+            recruiter=self.recruiter,
+            title="Senior Platform Engineer",
+            description="Build cloud platforms.",
+            is_active=True,
+        )
+
+        # Resume for candidate
+        self.resume = Resume.objects.create(
+            candidate=self.candidate,
+            file=SimpleUploadedFile(
+                "my_resume.pdf",
+                b"%PDF-1.4 dummy",
+                content_type="application/pdf",
+            ),
+            original_filename="my_resume.pdf",
+            file_size=15,
+            mime_type="application/pdf",
+        )
+
+        # Resume for other candidate
+        self.other_resume = Resume.objects.create(
+            candidate=self.other_candidate,
+            file=SimpleUploadedFile(
+                "other_resume.pdf",
+                b"%PDF-1.4 dummy",
+                content_type="application/pdf",
+            ),
+            original_filename="other_resume.pdf",
+            file_size=15,
+            mime_type="application/pdf",
+        )
+
+    def authenticate(self, user):
+        token = RefreshToken.for_user(user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(token.access_token)}")
+
+    # 1. Resume Upload Tests
+    def test_candidate_resume_upload_success(self):
+        self.authenticate(self.candidate)
+        pdf_file = SimpleUploadedFile(
+            "new_resume.pdf",
+            b"%PDF-1.4 real document content",
+            content_type="application/pdf",
+        )
+        res = self.client.post(
+            "/api/resumes/",
+            {"file": pdf_file},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data["original_filename"], "new_resume.pdf")
+        self.assertEqual(res.data["mime_type"], "application/pdf")
+        self.assertGreater(res.data["file_size"], 0)
+
+    def test_resume_upload_invalid_extension(self):
+        self.authenticate(self.candidate)
+        exe_file = SimpleUploadedFile(
+            "malicious.exe",
+            b"binary payload",
+            content_type="application/x-msdownload",
+        )
+        res = self.client.post(
+            "/api/resumes/",
+            {"file": exe_file},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("file", res.data)
+
+    def test_resume_upload_size_exceeded(self):
+        self.authenticate(self.candidate)
+        large_content = b"0" * (6 * 1024 * 1024)  # 6MB
+        large_file = SimpleUploadedFile(
+            "huge_resume.pdf",
+            large_content,
+            content_type="application/pdf",
+        )
+        res = self.client.post(
+            "/api/resumes/",
+            {"file": large_file},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("file", res.data)
+
+    def test_recruiter_cannot_upload_resume(self):
+        self.authenticate(self.recruiter)
+        pdf_file = SimpleUploadedFile(
+            "resume.pdf",
+            b"%PDF-1.4 content",
+            content_type="application/pdf",
+        )
+        res = self.client.post(
+            "/api/resumes/",
+            {"file": pdf_file},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    # 2. Application Submission Tests
+    def test_candidate_apply_success(self):
+        self.authenticate(self.candidate)
+        res = self.client.post(
+            "/api/applications/",
+            {
+                "job_id": str(self.job.id),
+                "resume_id": str(self.resume.id),
+                "cover_letter": "I am excited to apply for this position.",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data["status"], "APPLIED")
+        self.assertEqual(len(res.data["status_history"]), 1)
+
+    def test_candidate_cannot_use_others_resume(self):
+        self.authenticate(self.candidate)
+        res = self.client.post(
+            "/api/applications/",
+            {
+                "job_id": str(self.job.id),
+                "resume_id": str(self.other_resume.id),
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("resume_id", res.data)
+
+    def test_prevent_duplicate_application(self):
+        self.authenticate(self.candidate)
+        # First application
+        self.client.post(
+            "/api/applications/",
+            {
+                "job_id": str(self.job.id),
+                "resume_id": str(self.resume.id),
+            },
+            format="json",
+        )
+        # Duplicate application attempt
+        res_dup = self.client.post(
+            "/api/applications/",
+            {
+                "job_id": str(self.job.id),
+                "resume_id": str(self.resume.id),
+            },
+            format="json",
+        )
+        self.assertEqual(res_dup.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("job_id", res_dup.data)
+
+    # 3. RBAC Scoping & Pipeline Stage Tests
+    def test_access_scoping_candidate_vs_recruiter(self):
+        # Candidate submits an application
+        self.authenticate(self.candidate)
+        create_res = self.client.post(
+            "/api/applications/",
+            {
+                "job_id": str(self.job.id),
+                "resume_id": str(self.resume.id),
+            },
+            format="json",
+        )
+        app_id = create_res.data["id"]
+
+        # Candidate can view their application
+        cand_list = self.client.get("/api/applications/")
+        self.assertEqual(cand_list.status_code, status.HTTP_200_OK)
+        results = cand_list.data.get("results", cand_list.data)
+        self.assertEqual(len(results), 1)
+
+        # Other candidate cannot view this application
+        self.authenticate(self.other_candidate)
+        other_list = self.client.get("/api/applications/")
+        other_results = other_list.data.get("results", other_list.data)
+        self.assertEqual(len(other_results), 0)
+
+        # Unrelated recruiter cannot view application for another company's job
+        self.authenticate(self.unrelated_recruiter)
+        unrelated_res = self.client.get(f"/api/applications/{app_id}/")
+        self.assertEqual(unrelated_res.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Company recruiter can view the application
+        self.authenticate(self.recruiter)
+        rec_res = self.client.get(f"/api/applications/{app_id}/")
+        self.assertEqual(rec_res.status_code, status.HTTP_200_OK)
+
+    def test_recruiter_patch_status_valid_and_invalid(self):
+        # Setup application
+        app = Application.objects.create(
+            job=self.job,
+            candidate=self.candidate,
+            resume=self.resume,
+            status=Application.Status.APPLIED,
+        )
+
+        self.authenticate(self.recruiter)
+
+        # 1. Illegal leap APPLIED -> SHORTLISTED should fail
+        res_bad = self.client.patch(
+            f"/api/applications/{app.id}/",
+            {"status": "SHORTLISTED"},
+            format="json",
+        )
+        self.assertEqual(res_bad.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("status", res_bad.data)
+
+        # 2. Valid transition APPLIED -> SCREENING should succeed
+        res_good = self.client.patch(
+            f"/api/applications/{app.id}/",
+            {
+                "status": "SCREENING",
+                "notes": "Candidate passed initial screening.",
+            },
+            format="json",
+        )
+        self.assertEqual(res_good.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_good.data["status"], "SCREENING")
+
+        app.refresh_from_db()
+        self.assertEqual(app.status, Application.Status.SCREENING)
+        self.assertEqual(app.status_history.count(), 1)
+        self.assertEqual(app.status_history.first().new_status, "SCREENING")
+
+    def test_candidate_withdraw_action(self):
+        app = Application.objects.create(
+            job=self.job,
+            candidate=self.candidate,
+            resume=self.resume,
+            status=Application.Status.APPLIED,
+        )
+        self.authenticate(self.candidate)
+
+        res = self.client.post(
+            f"/api/applications/{app.id}/withdraw/",
+            {"notes": "Withdrawn by candidate due to personal reasons."},
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["status"], "WITHDRAWN")
+
+        app.refresh_from_db()
+        self.assertEqual(app.status, Application.Status.WITHDRAWN)
