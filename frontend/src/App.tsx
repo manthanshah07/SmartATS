@@ -7,7 +7,7 @@ import CandidateJobs from "./pages/CandidateJobs"
 import Landing from "./pages/Landing"
 import RecruiterPipeline from "./pages/RecruiterPipeline"
 
-export default function App() {
+export default function App(): React.ReactElement {
   return (
     <BrowserRouter>
       <Routes>

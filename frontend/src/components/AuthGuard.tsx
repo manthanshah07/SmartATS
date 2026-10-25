@@ -3,16 +3,21 @@ import { Navigate, useLocation } from "react-router-dom"
 import { ShieldAlert, ArrowRight, LogOut } from "lucide-react"
 import { getCurrentUser, isAuthenticated, logoutUser } from "../lib/auth"
 
+export interface AuthGuardProps {
+  allowedRoles?: string[] | string
+  fallbackPath?: string
+  children?: React.ReactNode
+}
+
 /**
  * Protected route wrapper component that verifies JWT authentication
  * and enforces role-based access control.
- *
- * @param {Object} props
- * @param {string[]|string} [props.allowedRoles] - Optional list of authorized roles (e.g. ['RECRUITER', 'ADMIN'])
- * @param {string} [props.fallbackPath] - Optional override path when role is not permitted
- * @param {React.ReactNode} [props.children] - Nested protected components
  */
-export default function AuthGuard({ allowedRoles, fallbackPath, children }) {
+export default function AuthGuard({
+  allowedRoles,
+  fallbackPath,
+  children,
+}: AuthGuardProps): React.ReactElement | null {
   const location = useLocation()
   const isAuth = isAuthenticated()
   const user = getCurrentUser()
@@ -31,16 +36,16 @@ export default function AuthGuard({ allowedRoles, fallbackPath, children }) {
     )
 
     if (!isAuthorized) {
-      // If a candidate tries to access recruiter routes, redirect to candidate portal or fallback
       if (fallbackPath) {
         return <Navigate to={fallbackPath} replace />
       }
 
+      // If a candidate tries to access recruiter routes, redirect to candidate portal
       if (userRole === "CANDIDATE") {
         return <Navigate to="/candidate/jobs" replace />
       }
 
-      // Default access denied UI if no clear redirect applies
+      // Default access restricted UI
       return (
         <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 text-center">
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
@@ -60,6 +65,7 @@ export default function AuthGuard({ allowedRoles, fallbackPath, children }) {
 
             <div className="mt-6 flex flex-col gap-2.5">
               <button
+                type="button"
                 onClick={() => (window.location.href = "/candidate/jobs")}
                 className="flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
               >
@@ -67,6 +73,7 @@ export default function AuthGuard({ allowedRoles, fallbackPath, children }) {
               </button>
 
               <button
+                type="button"
                 onClick={() => logoutUser()}
                 className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
               >

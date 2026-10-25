@@ -13,10 +13,10 @@ import {
   MapPin,
   RefreshCw,
   Search,
-  Sparkles,
   UploadCloud,
   X,
 } from "lucide-react"
+import axios from "axios"
 import {
   Badge,
   Button,
@@ -38,12 +38,13 @@ import {
 import {
   formatJobType,
   formatSalary,
+  Job,
   useApplyToJob,
   useJobs,
 } from "../hooks/useJobs"
 import { getCurrentUser, logoutUser } from "../lib/auth"
 
-const AVATAR_COLORS = [
+const AVATAR_COLORS: string[] = [
   "bg-indigo-600",
   "bg-violet-600",
   "bg-blue-600",
@@ -53,7 +54,7 @@ const AVATAR_COLORS = [
   "bg-rose-600",
 ]
 
-function getAvatarColor(identifier) {
+function getAvatarColor(identifier?: string): string {
   if (!identifier) return "bg-indigo-600"
   let hash = 0
   for (let i = 0; i < identifier.length; i++) {
@@ -63,7 +64,7 @@ function getAvatarColor(identifier) {
   return AVATAR_COLORS[index]
 }
 
-function getInitials(text) {
+function getInitials(text?: string): string {
   if (!text) return "CD"
   const clean = text.split("@")[0].replace(/[^a-zA-Z]/g, " ").trim()
   const parts = clean.split(/\s+/)
@@ -73,7 +74,7 @@ function getInitials(text) {
   return text.slice(0, 2).toUpperCase()
 }
 
-function formatRelativeTime(dateString) {
+function formatRelativeTime(dateString?: string): string {
   if (!dateString) return "Recently"
   const now = new Date()
   const date = new Date(dateString)
@@ -90,22 +91,22 @@ function formatRelativeTime(dateString) {
   return `${diffInWeeks}w ago`
 }
 
-export default function CandidateJobs() {
+export default function CandidateJobs(): React.ReactElement {
   const navigate = useNavigate()
   const currentUser = getCurrentUser()
 
   // Filter State
-  const [search, setSearch] = useState("")
-  const [location, setLocation] = useState("")
-  const [jobType, setJobType] = useState("all")
-  const [minSalary, setMinSalary] = useState("all")
+  const [search, setSearch] = useState<string>("")
+  const [location, setLocation] = useState<string>("")
+  const [jobType, setJobType] = useState<string>("all")
+  const [minSalary, setMinSalary] = useState<string>("all")
 
   // Modal State
-  const [selectedJobToApply, setSelectedJobToApply] = useState(null)
-  const [resumeFile, setResumeFile] = useState(null)
-  const [coverLetter, setCoverLetter] = useState("")
-  const [applyError, setApplyError] = useState(null)
-  const [toastNotice, setToastNotice] = useState(null)
+  const [selectedJobToApply, setSelectedJobToApply] = useState<Job | null>(null)
+  const [resumeFile, setResumeFile] = useState<File | null>(null)
+  const [coverLetter, setCoverLetter] = useState<string>("")
+  const [applyError, setApplyError] = useState<string | null>(null)
+  const [toastNotice, setToastNotice] = useState<string | null>(null)
 
   // API Hooks
   const {
@@ -122,7 +123,7 @@ export default function CandidateJobs() {
 
   const applyMutation = useApplyToJob()
 
-  const handleFileChange = (e) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
     setApplyError(null)
     const file = e.target.files?.[0]
     if (file) {
@@ -134,7 +135,9 @@ export default function CandidateJobs() {
     }
   }
 
-  const handleApplySubmit = async (e) => {
+  const handleApplySubmit = async (
+    e: React.FormEvent<HTMLFormElement>
+  ): Promise<void> => {
     e.preventDefault()
     if (!selectedJobToApply) return
     if (!resumeFile) {
@@ -156,13 +159,19 @@ export default function CandidateJobs() {
       setResumeFile(null)
       setCoverLetter("")
       setSelectedJobToApply(null)
-    } catch (err) {
-      const detail =
-        err.response?.data?.detail ||
-        err.response?.data?.non_field_errors?.[0] ||
-        err.response?.data?.file?.[0] ||
-        "Failed to submit application. Please verify your file and try again."
-      setApplyError(String(detail))
+    } catch (err: unknown) {
+      let detail = "Failed to submit application. Please verify your file and try again."
+      if (axios.isAxiosError(err)) {
+        const data = err.response?.data as Record<string, any> | undefined
+        if (data?.detail) {
+          detail = String(data.detail)
+        } else if (Array.isArray(data?.non_field_errors) && data.non_field_errors.length > 0) {
+          detail = String(data.non_field_errors[0])
+        } else if (Array.isArray(data?.file) && data.file.length > 0) {
+          detail = String(data.file[0])
+        }
+      }
+      setApplyError(detail)
     }
   }
 
@@ -204,7 +213,10 @@ export default function CandidateJobs() {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="flex items-center gap-2 rounded-full p-1.5 hover:bg-slate-50">
+              <button
+                type="button"
+                className="flex items-center gap-2 rounded-full p-1.5 hover:bg-slate-50"
+              >
                 <div className="grid size-9 place-items-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-700">
                   {userInitials}
                 </div>
@@ -222,7 +234,7 @@ export default function CandidateJobs() {
             <DropdownMenuContent align="end" className="w-52">
               <div className="px-3 py-2 border-b border-slate-100">
                 <p className="text-xs font-semibold text-slate-900 truncate">
-                  {currentUser?.email || "candidate@smartats.com"}
+                  {currentUser?.email || "candidate@test.com"}
                 </p>
                 <p className="text-[10px] text-slate-400">
                   Role: {currentUser?.role || "CANDIDATE"}
@@ -253,6 +265,7 @@ export default function CandidateJobs() {
               <span>{toastNotice}</span>
             </div>
             <button
+              type="button"
               aria-label="Dismiss toast"
               onClick={() => setToastNotice(null)}
               className="text-indigo-600 hover:text-indigo-800"

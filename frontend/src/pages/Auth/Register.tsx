@@ -12,34 +12,33 @@ import {
   Mail,
   Loader2,
   User,
-  UserCheck,
 } from "lucide-react"
+import axios from "axios"
 import api from "../../lib/api"
 import { setAuthSession } from "../../lib/auth"
 
-export default function Register() {
+export default function Register(): React.ReactElement {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
 
-  // Default role from query param ?role=RECRUITER or ?role=CANDIDATE
   const initialRole =
     searchParams.get("role")?.toUpperCase() === "RECRUITER"
       ? "RECRUITER"
       : "CANDIDATE"
 
-  const [role, setRole] = useState(initialRole)
-  const [firstName, setFirstName] = useState("")
-  const [lastName, setLastName] = useState("")
-  const [email, setEmail] = useState("")
-  const [companyName, setCompanyName] = useState("")
-  const [jobTitle, setJobTitle] = useState("")
-  const [password, setPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
-  const [showPassword, setShowPassword] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [errorMessage, setErrorMessage] = useState(null)
+  const [role, setRole] = useState<"CANDIDATE" | "RECRUITER">(initialRole)
+  const [firstName, setFirstName] = useState<string>("")
+  const [lastName, setLastName] = useState<string>("")
+  const [email, setEmail] = useState<string>("")
+  const [companyName, setCompanyName] = useState<string>("")
+  const [jobTitle, setJobTitle] = useState<string>("")
+  const [password, setPassword] = useState<string>("")
+  const [confirmPassword, setConfirmPassword] = useState<string>("")
+  const [showPassword, setShowPassword] = useState<boolean>(false)
+  const [loading, setLoading] = useState<boolean>(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault()
     setErrorMessage(null)
 
@@ -97,29 +96,26 @@ export default function Register() {
       } else {
         navigate("/candidate/jobs", { replace: true })
       }
-    } catch (err) {
-      console.error("Registration error:", err)
-      const responseData = err.response?.data
+    } catch (err: unknown) {
       let message = "Registration failed. Please check your information."
-
-      if (responseData) {
+      if (axios.isAxiosError(err)) {
+        const responseData = err.response?.data as Record<string, any> | undefined
         if (typeof responseData === "string") {
           message = responseData
-        } else if (responseData.email) {
+        } else if (responseData?.email) {
           message = Array.isArray(responseData.email)
-            ? responseData.email[0]
-            : responseData.email
-        } else if (responseData.password) {
+            ? String(responseData.email[0])
+            : String(responseData.email)
+        } else if (responseData?.password) {
           message = Array.isArray(responseData.password)
-            ? responseData.password[0]
-            : responseData.password
-        } else if (responseData.detail) {
-          message = responseData.detail
-        } else if (responseData.non_field_errors) {
-          message = responseData.non_field_errors[0]
+            ? String(responseData.password[0])
+            : String(responseData.password)
+        } else if (responseData?.detail) {
+          message = String(responseData.detail)
+        } else if (Array.isArray(responseData?.non_field_errors)) {
+          message = String(responseData.non_field_errors[0])
         }
       }
-
       setErrorMessage(message)
     } finally {
       setLoading(false)
@@ -160,7 +156,7 @@ export default function Register() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            {/* 1. VISUAL ROLE SELECTION TOGGLE */}
+            {/* Visual Role Selection Toggle */}
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="block text-xs font-bold uppercase tracking-wider text-slate-600">
@@ -170,7 +166,9 @@ export default function Register() {
                 <select
                   aria-label="Select account role"
                   value={role}
-                  onChange={(e) => setRole(e.target.value)}
+                  onChange={(e) =>
+                    setRole(e.target.value as "CANDIDATE" | "RECRUITER")
+                  }
                   className="text-xs text-slate-500 bg-transparent border-0 underline cursor-pointer focus:ring-0"
                 >
                   <option value="CANDIDATE">Candidate</option>
@@ -299,7 +297,7 @@ export default function Register() {
                       id="company_name"
                       type="text"
                       required={role === "RECRUITER"}
-                      placeholder="e.g. Stripe, Acme"
+                      placeholder="e.g. TechNova"
                       value={companyName}
                       onChange={(e) => setCompanyName(e.target.value)}
                       className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-xs text-slate-900 placeholder:text-slate-400 outline-none focus:border-indigo-600 focus:ring-2 focus:ring-indigo-600/20"

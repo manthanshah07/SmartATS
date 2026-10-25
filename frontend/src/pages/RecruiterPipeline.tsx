@@ -11,11 +11,9 @@ import {
   Check,
   ChevronRight,
   CircleDollarSign,
-  CircleUserRound,
   Clock3,
   ExternalLink,
   FileText,
-  Filter,
   Kanban,
   Loader2,
   LogOut,
@@ -24,13 +22,12 @@ import {
   Plus,
   RefreshCw,
   Search,
-  Settings2,
   Sparkles,
   TrendingUp,
-  UploadCloud,
   Users,
   X,
 } from "lucide-react"
+import axios from "axios"
 import {
   Badge,
   Button,
@@ -51,6 +48,8 @@ import {
 } from "../components/ui/primitives"
 import { useAnalytics } from "../hooks/useAnalytics"
 import {
+  Application,
+  ApplicationStatus,
   useApplications,
   useUpdateApplicationStatus,
 } from "../hooks/useApplications"
@@ -61,7 +60,7 @@ import {
 } from "../hooks/useJobs"
 import { getCurrentUser, logoutUser } from "../lib/auth"
 
-const AVATAR_COLORS = [
+const AVATAR_COLORS: string[] = [
   "bg-indigo-600",
   "bg-violet-600",
   "bg-blue-600",
@@ -71,7 +70,7 @@ const AVATAR_COLORS = [
   "bg-rose-600",
 ]
 
-function getAvatarColor(identifier) {
+function getAvatarColor(identifier?: string): string {
   if (!identifier) return "bg-indigo-600"
   let hash = 0
   for (let i = 0; i < identifier.length; i++) {
@@ -81,7 +80,7 @@ function getAvatarColor(identifier) {
   return AVATAR_COLORS[index]
 }
 
-function getInitials(text) {
+function getInitials(text?: string): string {
   if (!text) return "RC"
   const clean = text.split("@")[0].replace(/[^a-zA-Z]/g, " ").trim()
   const parts = clean.split(/\s+/)
@@ -91,7 +90,7 @@ function getInitials(text) {
   return text.slice(0, 2).toUpperCase()
 }
 
-function formatRelativeTime(dateString) {
+function formatRelativeTime(dateString?: string): string {
   if (!dateString) return "Recently"
   const now = new Date()
   const date = new Date(dateString)
@@ -108,7 +107,7 @@ function formatRelativeTime(dateString) {
   return `${diffInWeeks}w ago`
 }
 
-function scoreTone(score) {
+function scoreTone(score: number | string | undefined | null): string {
   if (score === undefined || score === null) {
     return "border-slate-200 bg-slate-50 text-slate-500"
   }
@@ -118,7 +117,11 @@ function scoreTone(score) {
   return "border-amber-200 bg-amber-50 text-amber-700"
 }
 
-const KANBAN_COLUMNS = [
+const KANBAN_COLUMNS: {
+  id: ApplicationStatus
+  title: string
+  tone: string
+}[] = [
   { id: "APPLIED", title: "Applied", tone: "bg-indigo-500" },
   { id: "SCREENING", title: "Screening", tone: "bg-violet-500" },
   { id: "SHORTLISTED", title: "Shortlisted", tone: "bg-sky-500" },
@@ -126,7 +129,7 @@ const KANBAN_COLUMNS = [
   { id: "OFFERED", title: "Offered", tone: "bg-emerald-500" },
 ]
 
-const NEXT_STATUS = {
+const NEXT_STATUS: Record<ApplicationStatus, ApplicationStatus | null> = {
   APPLIED: "SCREENING",
   SCREENING: "SHORTLISTED",
   SHORTLISTED: "INTERVIEW_SCHEDULED",
@@ -136,7 +139,7 @@ const NEXT_STATUS = {
   WITHDRAWN: null,
 }
 
-const NEXT_STATUS_LABEL = {
+const NEXT_STATUS_LABEL: Record<ApplicationStatus, string | null> = {
   APPLIED: "Move to Screening",
   SCREENING: "Shortlist Candidate",
   SHORTLISTED: "Schedule Interview",
@@ -146,33 +149,39 @@ const NEXT_STATUS_LABEL = {
   WITHDRAWN: null,
 }
 
-export default function RecruiterPipeline() {
+export default function RecruiterPipeline(): React.ReactElement {
   const navigate = useNavigate()
   const currentUser = getCurrentUser()
 
-  const [activeTab, setActiveTab] = useState("kanban")
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [activeTab, setActiveTab] = useState<"kanban" | "analytics">("kanban")
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
 
   // Global Toast
-  const [toastNotice, setToastNotice] = useState(null)
+  const [toastNotice, setToastNotice] = useState<string | null>(null)
 
   // Kanban State
-  const [selectedJobFilter, setSelectedJobFilter] = useState("all")
-  const [selectedApplication, setSelectedApplication] = useState(null)
+  const [selectedJobFilter, setSelectedJobFilter] = useState<string>("all")
+  const [selectedApplication, setSelectedApplication] = useState<Application | null>(
+    null
+  )
 
   // Job Posting Modal State
-  const [postOpen, setPostOpen] = useState(false)
-  const [postTitle, setPostTitle] = useState("")
-  const [postCompanyId, setPostCompanyId] = useState("")
-  const [postDepartment, setPostDepartment] = useState("Engineering")
-  const [postJobType, setPostJobType] = useState("FULL_TIME")
-  const [postLocation, setPostLocation] = useState("Remote")
-  const [postSalaryMin, setPostSalaryMin] = useState("")
-  const [postSalaryMax, setPostSalaryMax] = useState("")
-  const [postDescription, setPostDescription] = useState("")
-  const [postSkills, setPostSkills] = useState(["Python", "Django", "React"])
-  const [skillInput, setSkillInput] = useState("")
-  const [postError, setPostError] = useState(null)
+  const [postOpen, setPostOpen] = useState<boolean>(false)
+  const [postTitle, setPostTitle] = useState<string>("")
+  const [postCompanyId, setPostCompanyId] = useState<string>("")
+  const [postDepartment, setPostDepartment] = useState<string>("Engineering")
+  const [postJobType, setPostJobType] = useState<string>("FULL_TIME")
+  const [postLocation, setPostLocation] = useState<string>("Remote")
+  const [postSalaryMin, setPostSalaryMin] = useState<string>("")
+  const [postSalaryMax, setPostSalaryMax] = useState<string>("")
+  const [postDescription, setPostDescription] = useState<string>("")
+  const [postSkills, setPostSkills] = useState<string[]>([
+    "Python",
+    "Django",
+    "React",
+  ])
+  const [skillInput, setSkillInput] = useState<string>("")
+  const [postError, setPostError] = useState<string | null>(null)
 
   // API Hooks
   const {
@@ -188,38 +197,11 @@ export default function RecruiterPipeline() {
 
   const {
     data: jobs = [],
-    refetch: refetchJobs,
   } = useJobs({
     is_active: true,
   })
 
   const { data: companies = [] } = useCompanies()
-
-  // Safeguard: Automatically select recruiter's company or first verified company
-  useEffect(() => {
-    if (companies.length > 0 && !postCompanyId) {
-      // 1. Match recruiter's assigned company ID
-      if (currentUser?.company_id && companies.some((c) => c.id === currentUser.company_id)) {
-        setPostCompanyId(currentUser.company_id)
-        return
-      }
-      // 2. Match recruiter's company name
-      if (currentUser?.company_name) {
-        const matched = companies.find(
-          (c) => c.name.toLowerCase() === currentUser.company_name.toLowerCase()
-        )
-        if (matched) {
-          setPostCompanyId(matched.id)
-          return
-        }
-      }
-      // 3. Fallback to first verified company or first available company
-      const defaultCompany = companies.find((c) => c.is_verified) || companies[0]
-      if (defaultCompany) {
-        setPostCompanyId(defaultCompany.id)
-      }
-    }
-  }, [companies, currentUser, postCompanyId])
   const {
     data: analytics,
     isLoading: isLoadingAnalytics,
@@ -228,9 +210,32 @@ export default function RecruiterPipeline() {
 
   const createJobMutation = useCreateJob()
 
+  // Safeguard: Automatically select recruiter's company or first verified company
+  useEffect(() => {
+    if (companies.length > 0 && !postCompanyId) {
+      if (currentUser?.company_id && companies.some((c) => c.id === currentUser.company_id)) {
+        setPostCompanyId(currentUser.company_id)
+        return
+      }
+      if (currentUser?.company_name) {
+        const matched = companies.find(
+          (c) => c.name.toLowerCase() === currentUser.company_name?.toLowerCase()
+        )
+        if (matched) {
+          setPostCompanyId(matched.id)
+          return
+        }
+      }
+      const defaultCompany = companies.find((c) => c.is_verified) || companies[0]
+      if (defaultCompany) {
+        setPostCompanyId(defaultCompany.id)
+      }
+    }
+  }, [companies, currentUser, postCompanyId])
+
   // Partition applications by status for Kanban columns
   const applicationsByStatus = useMemo(() => {
-    const map = {
+    const map: Record<ApplicationStatus, Application[]> = {
       APPLIED: [],
       SCREENING: [],
       SHORTLISTED: [],
@@ -251,14 +256,17 @@ export default function RecruiterPipeline() {
   const averageMatchScore = useMemo(() => {
     const scores = applications
       .map((a) => (a.match_score?.overall_score ? Number(a.match_score.overall_score) : null))
-      .filter((s) => s !== null)
+      .filter((s): s is number => s !== null)
     if (!scores.length) return "78%"
     const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
     return `${avg}%`
   }, [applications])
 
   // Handle status update
-  const handleStatusTransition = async (applicationId, newStatus) => {
+  const handleStatusTransition = async (
+    applicationId: string,
+    newStatus: ApplicationStatus
+  ): Promise<void> => {
     try {
       await updateStatusMutation.mutateAsync({
         applicationId,
@@ -270,17 +278,22 @@ export default function RecruiterPipeline() {
           prev ? { ...prev, status: newStatus } : null
         )
       }
-    } catch (err) {
-      const msg =
-        err.response?.data?.detail ||
-        err.response?.data?.status?.[0] ||
-        "Failed to update application status."
+    } catch (err: unknown) {
+      let msg = "Failed to update application status."
+      if (axios.isAxiosError(err)) {
+        const data = err.response?.data as Record<string, any> | undefined
+        if (data?.detail) {
+          msg = String(data.detail)
+        } else if (Array.isArray(data?.status) && data.status.length > 0) {
+          msg = String(data.status[0])
+        }
+      }
       setToastNotice(`Error: ${msg}`)
     }
   }
 
   // Handle Skill Chip Adding
-  const handleAddSkill = (e) => {
+  const handleAddSkill = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === "Enter") {
       e.preventDefault()
       const val = skillInput.trim()
@@ -294,13 +307,13 @@ export default function RecruiterPipeline() {
     }
   }
 
-  const handleOpenPostModal = () => {
+  const handleOpenPostModal = (): void => {
     if (companies.length > 0 && !postCompanyId) {
       const defaultCompany =
         (currentUser?.company_id && companies.find((c) => c.id === currentUser.company_id)) ||
         (currentUser?.company_name &&
           companies.find(
-            (c) => c.name.toLowerCase() === currentUser.company_name.toLowerCase()
+            (c) => c.name.toLowerCase() === currentUser.company_name?.toLowerCase()
           )) ||
         companies.find((c) => c.is_verified) ||
         companies[0]
@@ -312,7 +325,9 @@ export default function RecruiterPipeline() {
   }
 
   // Handle Job Creation Submit
-  const handleCreateJobSubmit = async (e) => {
+  const handleCreateJobSubmit = async (
+    e: React.FormEvent<HTMLFormElement>
+  ): Promise<void> => {
     e.preventDefault()
     setPostError(null)
 
@@ -321,7 +336,7 @@ export default function RecruiterPipeline() {
       currentUser?.company_id ||
       (currentUser?.company_name &&
         companies.find(
-          (c) => c.name.toLowerCase() === currentUser.company_name.toLowerCase()
+          (c) => c.name.toLowerCase() === currentUser.company_name?.toLowerCase()
         )?.id) ||
       companies.find((c) => c.is_verified)?.id ||
       companies[0]?.id
@@ -354,20 +369,26 @@ export default function RecruiterPipeline() {
       setPostSalaryMax("")
       setPostDescription("")
       setPostSkills(["Python", "Django", "React"])
-    } catch (err) {
-      const detail =
-        err.response?.data?.detail ||
-        err.response?.data?.company?.[0] ||
-        err.response?.data?.salary_min?.[0] ||
-        "Failed to create job requisition. Please check your inputs."
-      setPostError(String(detail))
+    } catch (err: unknown) {
+      let detail = "Failed to create job requisition. Please check your inputs."
+      if (axios.isAxiosError(err)) {
+        const data = err.response?.data as Record<string, any> | undefined
+        if (data?.detail) {
+          detail = String(data.detail)
+        } else if (Array.isArray(data?.company) && data.company.length > 0) {
+          detail = String(data.company[0])
+        } else if (Array.isArray(data?.salary_min) && data.salary_min.length > 0) {
+          detail = String(data.salary_min[0])
+        }
+      }
+      setPostError(detail)
     }
   }
 
   // Calculate funnel max for progress width
   const funnelMax = useMemo(() => {
     if (!analytics?.status_funnel) return 1
-    const vals = Object.values(analytics.status_funnel)
+    const vals = Object.values(analytics.status_funnel) as number[]
     return Math.max(1, ...vals)
   }, [analytics])
 
@@ -397,6 +418,7 @@ export default function RecruiterPipeline() {
         <div className="flex flex-1 flex-col justify-between p-4">
           <nav className="flex flex-col gap-1.5" aria-label="Main navigation">
             <button
+              type="button"
               onClick={() => setActiveTab("kanban")}
               className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
                 activeTab === "kanban"
@@ -418,6 +440,7 @@ export default function RecruiterPipeline() {
             </button>
 
             <button
+              type="button"
               onClick={() => setActiveTab("analytics")}
               className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
                 activeTab === "analytics"
@@ -430,6 +453,7 @@ export default function RecruiterPipeline() {
             </button>
 
             <button
+              type="button"
               onClick={() => navigate("/candidate/jobs")}
               className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-50 hover:text-slate-800 transition-colors"
             >
@@ -440,6 +464,7 @@ export default function RecruiterPipeline() {
 
           <div className="flex flex-col gap-1.5 border-t border-slate-100 pt-3">
             <button
+              type="button"
               onClick={() => setSidebarOpen(!sidebarOpen)}
               className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-400 hover:bg-slate-50 hover:text-slate-700"
               aria-label="Toggle sidebar"
@@ -493,10 +518,13 @@ export default function RecruiterPipeline() {
               <span className="absolute right-2.5 top-2 size-1.5 rounded-full bg-rose-500 ring-2 ring-white" />
             </Button>
 
-            {/* Profile Dropdown with Authenticated User & Sign Out */}
+            {/* Profile Dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-2 rounded-full p-1.5 hover:bg-slate-50">
+                <button
+                  type="button"
+                  className="flex items-center gap-2 rounded-full p-1.5 hover:bg-slate-50"
+                >
                   <div className="grid size-9 place-items-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-700">
                     {userInitials}
                   </div>
@@ -514,7 +542,7 @@ export default function RecruiterPipeline() {
               <DropdownMenuContent align="end" className="w-52">
                 <div className="px-3 py-2 border-b border-slate-100">
                   <p className="text-xs font-semibold text-slate-900 truncate">
-                    {currentUser?.email || "recruiter@smartats.com"}
+                    {currentUser?.email || "recruiter@technova.com"}
                   </p>
                   <p className="text-[10px] text-slate-400">
                     Role: {currentUser?.role || "RECRUITER"}
@@ -546,6 +574,7 @@ export default function RecruiterPipeline() {
                 <span>{toastNotice}</span>
               </div>
               <button
+                type="button"
                 aria-label="Dismiss toast"
                 onClick={() => setToastNotice(null)}
                 className="text-indigo-600 hover:text-indigo-800"
@@ -896,7 +925,7 @@ export default function RecruiterPipeline() {
                     },
                     { key: "OFFERED", label: "Offered", color: "bg-emerald-500" },
                   ].map((stage) => {
-                    const count = analytics?.status_funnel?.[stage.key] ?? 0
+                    const count = (analytics?.status_funnel as Record<string, number> | undefined)?.[stage.key] ?? 0
                     const pct = Math.round((count / funnelMax) * 100)
                     return (
                       <div key={stage.key} className="flex items-center gap-4">
@@ -1243,7 +1272,7 @@ export default function RecruiterPipeline() {
                       className="bg-indigo-600 hover:bg-indigo-700 text-xs"
                       disabled={updateStatusMutation.isPending}
                       onClick={() => {
-                        const next = NEXT_STATUS[selectedApplication.status]
+                        const next = NEXT_STATUS[selectedApplication.status]!
                         handleStatusTransition(selectedApplication.id, next)
                         setSelectedApplication(null)
                       }}

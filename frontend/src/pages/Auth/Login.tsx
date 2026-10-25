@@ -1,34 +1,46 @@
-import React, { useState } from "react"
+import React, { useEffect, useState } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import {
   AlertCircle,
   ArrowRight,
   BriefcaseBusiness,
-  CheckCircle2,
   Eye,
   EyeOff,
   Lock,
   Mail,
   Loader2,
-  Sparkles,
 } from "lucide-react"
+import axios, { AxiosError } from "axios"
 import api from "../../lib/api"
 import { setAuthSession } from "../../lib/auth"
 
-export default function Login() {
+interface LocationState {
+  from?: { pathname?: string }
+  demoEmail?: string
+  demoPassword?: string
+}
+
+export default function Login(): React.ReactElement {
   const navigate = useNavigate()
   const location = useLocation()
+  const state = location.state as LocationState | undefined
 
-  // Retrieve destination from router state if redirected from AuthGuard
-  const from = location.state?.from?.pathname
+  const [email, setEmail] = useState<string>(state?.demoEmail || "")
+  const [password, setPassword] = useState<string>(state?.demoPassword || "")
+  const [showPassword, setShowPassword] = useState<boolean>(false)
+  const [loading, setLoading] = useState<boolean>(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [showPassword, setShowPassword] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [errorMessage, setErrorMessage] = useState(null)
+  useEffect(() => {
+    if (state?.demoEmail) {
+      setEmail(state.demoEmail)
+    }
+    if (state?.demoPassword) {
+      setPassword(state.demoPassword)
+    }
+  }, [state])
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault()
     setErrorMessage(null)
 
@@ -57,20 +69,26 @@ export default function Login() {
         user,
       })
 
+      const destination = state?.from?.pathname
+
       // Redirect based on role or original destination
-      if (from && from !== "/login") {
-        navigate(from, { replace: true })
+      if (destination && destination !== "/login") {
+        navigate(destination, { replace: true })
       } else if (role === "RECRUITER" || role === "ADMIN") {
         navigate("/recruiter/pipeline", { replace: true })
       } else {
         navigate("/candidate/jobs", { replace: true })
       }
-    } catch (err) {
-      console.error("Login failure:", err)
-      const detail =
-        err.response?.data?.detail ||
-        err.response?.data?.non_field_errors?.[0] ||
-        "Invalid email or password. Please verify your credentials."
+    } catch (err: unknown) {
+      let detail = "Invalid email or password. Please verify your credentials."
+      if (axios.isAxiosError(err)) {
+        const data = err.response?.data as Record<string, any> | undefined
+        if (data?.detail) {
+          detail = String(data.detail)
+        } else if (Array.isArray(data?.non_field_errors) && data.non_field_errors.length > 0) {
+          detail = String(data.non_field_errors[0])
+        }
+      }
       setErrorMessage(detail)
     } finally {
       setLoading(false)
@@ -204,8 +222,8 @@ export default function Login() {
               <button
                 type="button"
                 onClick={() => {
-                  setEmail("recruiter@smartats.com")
-                  setPassword("RecruiterPass123!")
+                  setEmail("recruiter@technova.com")
+                  setPassword("Password123!")
                 }}
                 className="flex-1 rounded-lg border border-slate-200 bg-slate-50/70 py-2 px-2 text-center text-[11px] font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
               >
@@ -214,8 +232,8 @@ export default function Login() {
               <button
                 type="button"
                 onClick={() => {
-                  setEmail("candidate@smartats.com")
-                  setPassword("CandidatePass123!")
+                  setEmail("candidate@test.com")
+                  setPassword("Password123!")
                 }}
                 className="flex-1 rounded-lg border border-slate-200 bg-slate-50/70 py-2 px-2 text-center text-[11px] font-semibold text-slate-700 hover:bg-slate-100 transition-colors"
               >
