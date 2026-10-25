@@ -382,7 +382,10 @@ class ApplicationsAPITestCase(TestCase):
             format="json",
         )
         self.assertEqual(res_dup.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("job_id", res_dup.data)
+        detail = res_dup.data.get("detail")
+        if isinstance(detail, list):
+            detail = detail[0]
+        self.assertEqual(str(detail), "You have already applied to this position.")
 
     # 3. RBAC Scoping & Pipeline Stage Tests
     def test_access_scoping_candidate_vs_recruiter(self):

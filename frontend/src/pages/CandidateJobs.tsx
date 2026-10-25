@@ -165,11 +165,29 @@ export default function CandidateJobs(): React.ReactElement {
       if (axios.isAxiosError(err)) {
         const data = err.response?.data as Record<string, any> | undefined
         if (data?.detail) {
-          detail = String(data.detail)
-        } else if (Array.isArray(data?.non_field_errors) && data.non_field_errors.length > 0) {
-          detail = String(data.non_field_errors[0])
+          detail = Array.isArray(data.detail) ? String(data.detail[0]) : String(data.detail)
         } else if (Array.isArray(data?.file) && data.file.length > 0) {
           detail = String(data.file[0])
+        } else if (typeof data?.file === "string") {
+          detail = data.file
+        } else if (Array.isArray(data?.non_field_errors) && data.non_field_errors.length > 0) {
+          detail = String(data.non_field_errors[0])
+        } else if (typeof data?.non_field_errors === "string") {
+          detail = data.non_field_errors
+        } else if (Array.isArray(data?.job_id) && data.job_id.length > 0) {
+          detail = String(data.job_id[0])
+        } else if (typeof data?.job_id === "string") {
+          detail = data.job_id
+        } else if (Array.isArray(data?.resume_id) && data.resume_id.length > 0) {
+          detail = String(data.resume_id[0])
+        } else if (typeof data?.resume_id === "string") {
+          detail = data.resume_id
+        } else if (data && typeof data === "object") {
+          const firstKey = Object.keys(data)[0]
+          if (firstKey && data[firstKey]) {
+            const val = data[firstKey]
+            detail = Array.isArray(val) ? String(val[0]) : String(val)
+          }
         }
       }
       setApplyError(detail)

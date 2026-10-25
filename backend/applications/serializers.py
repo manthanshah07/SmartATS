@@ -75,6 +75,11 @@ class ResumeSerializer(serializers.ModelSerializer):
             file_obj.seek(0)
         except Exception:
             raise serializers.ValidationError("Unable to inspect uploaded file header.")
+        finally:
+            try:
+                file_obj.seek(0)
+            except Exception:
+                pass
 
         if ext == ".pdf" and not header.startswith(b"%PDF-"):
             raise serializers.ValidationError(
@@ -86,10 +91,19 @@ class ResumeSerializer(serializers.ModelSerializer):
                 "Office Open XML specification."
             )
 
+        try:
+            file_obj.seek(0)
+        except Exception:
+            pass
+
         return file_obj
 
     def create(self, validated_data):
         file_obj = validated_data["file"]
+        try:
+            file_obj.seek(0)
+        except Exception:
+            pass
         user = self.context["request"].user
 
         docx_mime = (
@@ -206,10 +220,10 @@ class ApplicationSerializer(serializers.ModelSerializer):
             if (
                 user
                 and job
-                and Application.objects.filter(job=job, candidate=user).exists()
+                and Application.objects.filter(candidate=user, job=job).exists()
             ):
                 raise serializers.ValidationError(
-                    {"job_id": "You have already applied for this job opening."}
+                    {"detail": "You have already applied to this position."}
                 )
 
         # On Status Update
