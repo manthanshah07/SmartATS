@@ -30,11 +30,17 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
             "first_name": self.user.first_name,
             "last_name": self.user.last_name,
         }
-        if hasattr(self.user, "recruiter_profile") and self.user.recruiter_profile:
-            rec = self.user.recruiter_profile
-            user_info["company_id"] = str(rec.company_id) if rec.company_id else None
-            user_info["company_name"] = rec.company_name or (rec.company.name if rec.company else None)
-            user_info["title"] = rec.title
+        try:
+            if hasattr(self.user, "recruiter_profile") and self.user.recruiter_profile:
+                rec = self.user.recruiter_profile
+                user_info["company_id"] = str(rec.company_id) if rec.company_id else None
+                company_name = rec.company_name
+                if not company_name and rec.company:
+                    company_name = rec.company.name
+                user_info["company_name"] = company_name
+                user_info["title"] = rec.title
+        except Exception:
+            pass
         data["user"] = user_info
         return data
 

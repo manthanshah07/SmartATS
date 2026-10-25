@@ -57,9 +57,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -188,22 +188,23 @@ SIMPLE_JWT = {
 
 
 # CORS configuration
-CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL", "True").lower() in (
-    "true",
-    "1",
-    "yes",
-)
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:5173",
-    "https://smartats.vercel.app",
-    "https://smart-ats.vercel.app",
-]
+from corsheaders.defaults import default_headers, default_methods
+
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^https:\/\/.*\.vercel\.app$",
     r"^https:\/\/.*\.onrender\.com$",
+]
+CORS_ALLOWED_ORIGINS = [
+    "https://smart-ats-eta.vercel.app",
+    "https://smartats-4mdx.onrender.com",
+    "https://smartats.vercel.app",
+    "https://smart-ats.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
 ]
 extra_cors = os.getenv("CORS_ALLOWED_ORIGINS")
 if extra_cors:
@@ -214,6 +215,13 @@ if extra_cors:
             origin = origin.strip()
             if origin and origin not in CORS_ALLOWED_ORIGINS:
                 CORS_ALLOWED_ORIGINS.append(origin)
+
+CORS_ALLOW_METHODS = list(default_methods) + ["OPTIONS"]
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "authorization",
+    "content-type",
+    "x-csrftoken",
+]
 
 # Celery & Redis Broker Configuration
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
