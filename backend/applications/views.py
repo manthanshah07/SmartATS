@@ -1,3 +1,4 @@
+from django.db.models import Count
 from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -5,10 +6,11 @@ from rest_framework.response import Response
 from accounts.models import User
 from accounts.permissions import IsCandidate
 from applications.filters import ApplicationFilter
-from applications.models import Application, Resume
+from applications.models import Application, ApplicationStatusHistory, Resume
 from applications.permissions import CanAccessApplication
 from applications.serializers import ApplicationSerializer, ResumeSerializer
 from applications.services import ApplicationStateMachine
+from jobs.models import Job
 
 
 class ResumeViewSet(viewsets.ModelViewSet):
@@ -117,3 +119,126 @@ class ApplicationViewSet(viewsets.ModelViewSet):
             ApplicationSerializer(application).data,
             status=status.HTTP_200_OK,
         )
+
+
+class RecruiterAnalyticsViewSet(viewsets.ViewSet):
+    """
+    Aggregated metrics for recruiters and platform administrators:
+    - total applicants per active job
+    - applicant status funnel
+    - average time-to-hire
+    - average time-in-stage
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def list(self, request):
+        user = request.user
+        if user.role not in [User.Role.RECRUITER, User.Role.ADMIN] and not (
+            user.is_staff or user.is_superuser
+        ):
+            return Response(
+                {"detail": "Access restricted to recruiters and administrators."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if user.role == User.Role.ADMIN or user.is_staff or user.is_superuser:
+            jobs_qs = Job.objects.all()
+        else:
+            jobs_qs = Job.objects.filter(recruiter=user)
+
+        active_jobs = jobs_qs.filter(is_active=True).select_related("company")
+
+        # 1. Total applicants per active job
+        applicants_per_job = []
+        for job in active_jobs:
+            total_apps = job.applications.count()
+            applicants_per_job.append(
+                {
+                    "job_id": str(job.id),
+                    "job_title": job.title,
+                    "company_name": job.company.name if job.company else None,
+                    "total_applicants": total_apps,
+                }
+            )
+
+        # 2. Applicant status funnel
+        relevant_applications = Application.objects.filter(job__in=jobs_qs)
+        funnel_counts = {choice[0]: 0 for choice in Application.Status.choices}
+        status_aggs = relevant_applications.values("status").annotate(total=Count("id"))
+        for entry in status_aggs:
+            funnel_counts[entry["status"]] = entry["total"]
+
+        funnel_breakdown = [{"status": k, "count": v} for k, v in funnel_counts.items()]
+
+        # 3. Average time-to-hire (days) for applications that reached OFFERED or HIRED
+        hired_apps = relevant_applications.filter(
+            status__in=[Application.Status.OFFERED, Application.Status.HIRED]
+        )
+        time_to_hire_list = []
+        for app in hired_apps:
+            history_record = (
+                app.status_history.filter(
+                    new_status__in=[
+                        Application.Status.OFFERED,
+                        Application.Status.HIRED,
+                    ]
+                )
+                .order_by("created_at")
+                .first()
+            )
+            if history_record:
+                duration_days = (
+                    history_record.created_at - app.created_at
+                ).total_seconds() / 86400.0
+            else:
+                duration_days = (
+                    app.updated_at - app.created_at
+                ).total_seconds() / 86400.0
+            time_to_hire_list.append(max(0.0, duration_days))
+
+        avg_time_to_hire = (
+            round(sum(time_to_hire_list) / len(time_to_hire_list), 2)
+            if time_to_hire_list
+            else 0.0
+        )
+
+        # 4. Average time-in-stage (days)
+        stage_times = {st: [] for st in Application.Status.values}
+        histories = (
+            ApplicationStatusHistory.objects.filter(
+                application__in=relevant_applications
+            )
+            .select_related("application")
+            .order_by("application_id", "created_at")
+        )
+
+        last_time_map = {}
+        for entry in histories:
+            app_id = entry.application_id
+            if app_id not in last_time_map:
+                prev_time = entry.application.created_at
+            else:
+                prev_time = last_time_map[app_id]
+            delta_days = max(
+                0.0, (entry.created_at - prev_time).total_seconds() / 86400.0
+            )
+            stage_key = entry.old_status or Application.Status.APPLIED
+            stage_times.setdefault(stage_key, []).append(delta_days)
+            last_time_map[app_id] = entry.created_at
+
+        avg_time_in_stage = {
+            st: round(sum(vals) / len(vals), 2) if vals else 0.0
+            for st, vals in stage_times.items()
+        }
+
+        data = {
+            "total_active_jobs": active_jobs.count(),
+            "total_applications": relevant_applications.count(),
+            "applicants_per_job": applicants_per_job,
+            "status_funnel": funnel_counts,
+            "funnel_breakdown": funnel_breakdown,
+            "average_time_to_hire_days": avg_time_to_hire,
+            "average_time_in_stage_days": avg_time_in_stage,
+        }
+        return Response(data, status=status.HTTP_200_OK)

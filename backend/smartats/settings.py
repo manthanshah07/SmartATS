@@ -45,6 +45,8 @@ INSTALLED_APPS = [
     "accounts.apps.AccountsConfig",
     "jobs.apps.JobsConfig",
     "applications.apps.ApplicationsConfig",
+    "interviews.apps.InterviewsConfig",
+    "notifications.apps.NotificationsConfig",
 ]
 
 MIDDLEWARE = [
