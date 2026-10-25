@@ -1,7 +1,8 @@
-# SmartATS — Enterprise AI-Powered Applicant Tracking System
+# SmartATS — Distributed AI-Powered Talent Acquisition Engine
 
-[![Build & Test Status](https://img.shields.io/badge/CI-Passing-emerald?style=flat-square&logo=github-actions)](https://github.com/manthanshah07/SmartATS/actions)
-[![Automated Test Suite](https://img.shields.io/badge/Tests-81%2F81%20Passed-blue?style=flat-square&logo=checkmarx)](https://github.com/manthanshah07/SmartATS)
+[![CI/CD Pipeline](https://img.shields.io/badge/CI%2FCD-Passing-emerald?style=flat-square&logo=github-actions)](https://github.com/manthanshah07/SmartATS/actions)
+[![Backend Test Suite](https://img.shields.io/badge/Backend%20Tests-75%2F75%20Passed-blue?style=flat-square&logo=django)](https://github.com/manthanshah07/SmartATS)
+[![Frontend Test Suite](https://img.shields.io/badge/Frontend%20Tests-6%2F6%20Passed-blue?style=flat-square&logo=vitest)](https://github.com/manthanshah07/SmartATS)
 [![Python Version](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Django Framework](https://img.shields.io/badge/Django-5.1-092E20?style=flat-square&logo=django&logoColor=white)](https://djangoproject.com)
 [![React](https://img.shields.io/badge/React-18.3-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
@@ -13,56 +14,75 @@
 
 ---
 
-## 1. Executive Summary & Problem Statement
+## 1. Executive Summary & Engineering Trade-Offs
 
-Modern enterprise talent acquisition is bottlenecked by fragmented workflows, opaque resume parsing, and high-latency candidate evaluation. Traditional ATS platforms rely on rigid keyword-matching heuristics that discard high-potential candidates over trivial vocabulary differences while offering zero explainability into match scoring. Furthermore, recruiters waste countless hours managing disjointed status updates across manual spreadsheets and insecure email threads.
+### Problem Statement
 
-**SmartATS** is an enterprise-grade, distributed Applicant Tracking System engineered for high concurrency, security, and transparent candidate evaluation. Built on **Django 5.1 REST Framework** and **React 18 + TypeScript**, SmartATS combines:
-- **Hybrid Semantic Candidate Matching:** Evaluates candidates using both 384-dimensional dense semantic vector similarity (`all-MiniLM-L6-v2`) and deterministic skill-graph overlap.
-- **Explainable AI Insights:** Breaks match scores into objective semantic relevance, verified skills, and missing technical competencies.
-- **Deterministic Application State Machine:** Governs candidate lifecycles with strict database row-level locking (`select_for_update`) to prevent race conditions during high-volume stage transitions.
-- **Multi-Tenant Security Architecture:** Hardened with role-based JWT authentication, anti-IDOR tenant validation, binary magic-byte inspection, and strict rate-limiting.
-- **Low-Footprint Distributed Architecture:** Memory-profiled to operate within constrained cloud environments (such as Render 512MB RAM tiers) via lazy PyTorch instantiation and deterministic feature-hashing fallbacks.
+Modern enterprise talent acquisition is hindered by fragmented tooling, high-latency candidate workflows, and opaque resume screening. Traditional Applicant Tracking Systems (ATS) rely on brittle, exact-string keyword filters that discard qualified candidates over lexical variations while providing recruiters zero mathematical explainability into ranking decisions. Concurrently, high-volume hiring pipelines suffer from database race conditions during concurrent stage advancements and severe memory bloat when loading deep-learning NLP models into production web workers.
+
+### High-Level Capabilities
+
+**SmartATS** is an enterprise-grade, distributed talent acquisition engine built on **Django 5.1 REST Framework** and **React 18 + TypeScript**. Key capabilities include:
+
+- **Hybrid Semantic Candidate Matching:** Combines 384-dimensional dense semantic vector embeddings (`all-MiniLM-L6-v2`) with deterministic skill-graph overlap to provide instant, bias-resistant candidate ranking.
+- **Explainable Match Scoring:** Deconstructs suitability scores into normalized semantic similarity, verified technical skills, and identified skill gaps.
+- **Deterministic Application State Machine:** Serializes candidate lifecycles across five distinct stages with pessimistic row-level locking (`select_for_update`) to prevent race conditions.
+- **Hardened Multi-Tenant Security:** Features zero-trust tenant isolation, anti-IDOR checks on requisitions and interviews, binary magic-byte stream inspection, and role-based JWT authentication.
+- **Ultra-Low Memory Footprint:** Architected to operate reliably within 512MB RAM environments (e.g., Render free tiers) through lazy PyTorch instantiation and deterministic 384-dimensional feature hashing fallbacks.
+
+### Key Engineering Trade-Offs
+
+| Architectural Dimension | Chosen Approach | Alternative Evaluated | Engineering Rationale |
+| :--- | :--- | :--- | :--- |
+| **Parsing & Scoring Pipeline** | **Asynchronous Celery Task** | Synchronous REST Request | Keeps HTTP response times $< 80\text{ms}$; heavy PyMuPDF extraction and embedding generation run out-of-band in isolated worker pools. |
+| **Vector Similarity Engine** | **Dynamic Dual-Mode (PyTorch vs Hashing)** | Monolithic In-Memory Transformer | Running SentenceTransformers full-time consumes $\sim 380\text{MB}$ baseline RAM. SmartATS lazily instantiates models or falls back to a 384-dim sign-hashing vectorizer ($< 100\text{KB}$ RAM). |
+| **Concurrency Control** | **Pessimistic Row Locking (`select_for_update`)** | Optimistic Locking (`version` column) | Prevents conflicting stage advances and candidate withdrawals under high recruiter concurrency without requiring frontend retry loops. |
+| **Frontend Bundle Delivery** | **Route-Level Code-Splitting (`React.lazy`)** | Monolithic SPA Bundle | Reduces initial bundle from $> 650\text{kB}$ to $276\text{kB}$ index core, chunking heavy pages (`RecruiterPipeline`, `CandidateJobs`) into sub-$45\text{kB}$ downloads. |
+| **File Security** | **Binary Magic-Byte Inspection (`file.seek(0)`)** | MIME-type / Extension Only | Extension and header spoofing are trivial attack vectors. Inspecting the first 8 bytes (`%PDF-`, `PK\x03\x04`) guarantees strict format compliance before persistence. |
 
 ---
 
-## 2. System Architecture & Distributed Data Flow
+## 2. Distributed System Topology & Architecture
 
-SmartATS employs a decoupled micro-service cloud architecture designed for zero single-points-of-failure, horizontal scalability, and rapid global content delivery.
+SmartATS separates interactive client-side execution, stateless API orchestration, asynchronous task processing, and relational persistence into discrete, decoupled tiers.
 
-### Cloud Topology & Component Interaction
+### System Topology Diagram
 
 ```mermaid
 flowchart TD
-    subgraph ClientLayer["Edge & Client Tier"]
-        SPA["Vercel Edge Network\nReact 18 + TypeScript SPA\n(Tailwind CSS, TanStack Query)"]
+    subgraph ClientTier["Client Tier (Edge Delivery)"]
+        SPA["Vercel Edge Network\nReact 18 + TypeScript SPA\nDynamic Route-Chunking (React.lazy)"]
     end
 
-    subgraph IngressGateway["API & Application Gateway"]
-        CDN["Render Ingress / Cloudflare\nSSL/TLS Termination"]
-        Gunicorn["Gunicorn WSGI Server\n(1 Worker, 2 Threads)"]
-        DjangoApp["Django 5.1 REST API\n(JWT Auth, Rate Limiter, Throttling)"]
+    subgraph APIGateway["Application & API Gateway Tier"]
+        Ingress["Render Ingress / Cloudflare Edge\nTLS Termination & Edge Caching"]
+        GunicornWSGI["Gunicorn WSGI Server\n1 Master, 2 Sync Worker Threads"]
+        DjangoAPI["Django 5.1 REST Framework\nJWT Authentication & SimpleJWT\nWhiteNoise Static Compression\nAnon/User Rate Limiting (1000/day)"]
+        HealthEndpoint["/healthz Endpoint\nReal-time DB & Redis Ping"]
     end
 
-    subgraph WorkerTier["Asynchronous Processing Tier"]
-        RedisBroker["Redis 7 (In-Memory Broker)\nCelery Task Queue & Pub/Sub"]
-        CeleryWorker["Celery Background Worker\n(Concurrency=1, Max 120MB RAM)"]
+    subgraph AsyncTier["Asynchronous Compute Tier"]
+        RedisQueue["Redis 7 In-Memory Broker\nCelery Task Queue & Pub/Sub"]
+        CeleryWorker["Celery Worker (Single Concurrency)\nMemory Threshold: 120MB per child\nLazy-loaded PyTorch / MiniLM-L6-v2\nDeterministic 384-Dim Hashing Fallback"]
     end
 
-    subgraph DataStorageTier["Persistence & Object Storage"]
-        Postgres["Neon / Supabase PostgreSQL 16\n(pgvector Extension, ACID Storage)"]
-        S3Storage["AWS S3 / Cloudinary\n(Signed Expiring URLs, Private ACL)"]
+    subgraph PersistenceTier["Persistence & Object Storage Tier"]
+        Postgres["Neon / Supabase PostgreSQL 16\nACID Relational Engine\npgvector Extension for Embeddings\nPessimistic Row Locking (select_for_update)"]
+        ObjectStorage["Cloud Object Storage (AWS S3 / Cloudinary)\nPrivate ACLs & Expiring Presigned URLs\nLocal FileSystemStorage (Dev Fallback)"]
     end
 
-    SPA -->|HTTPS / REST API + JWT| CDN
-    CDN --> Gunicorn
-    Gunicorn --> DjangoApp
-    DjangoApp -->|Connection Pool 600s| Postgres
-    DjangoApp -->|Task Enqueue| RedisBroker
-    DjangoApp -->|Direct Upload / Presigned GET| S3Storage
-    RedisBroker -->|Consume Tasks| CeleryWorker
-    CeleryWorker -->|Read Resume Files| S3Storage
-    CeleryWorker -->|Update Parsed Data & Scores| Postgres
+    SPA -->|HTTPS / REST API + JWT| Ingress
+    Ingress --> GunicornWSGI
+    GunicornWSGI --> DjangoAPI
+    DjangoAPI --> HealthEndpoint
+    DjangoAPI -->|Persistent Pool 600s| Postgres
+    DjangoAPI -->|Direct Upload / Presigned GET| ObjectStorage
+    DjangoAPI -->|Dispatch Match Tasks| RedisQueue
+    RedisQueue -->|Consume Async Tasks| CeleryWorker
+    CeleryWorker -->|Read Document Stream| ObjectStorage
+    CeleryWorker -->|Write Embeddings & Scores| Postgres
+    HealthEndpoint -.->|Ping| Postgres
+    HealthEndpoint -.->|Ping| RedisQueue
 ```
 
 ### ASCII Architecture Overview
@@ -102,229 +122,203 @@ flowchart TD
 
 ## 3. Application State Machine & Lifecycle
 
-Candidate applications progress through a deterministic, auditable finite-state machine implemented in `backend/applications/services.py` (`ApplicationStateMachine`). Every transition enforces strict transition graph rules and creates an immutable audit trail in `ApplicationStatusHistory`.
+Candidate applications progress through a deterministic, auditable finite-state machine implemented in [backend/applications/services.py](file:///Users/manthanshah/Documents/SmartATS/backend/applications/services.py) (`ApplicationStateMachine`). Illegal state transitions are rejected with an HTTP 400 `ValidationError`, and every authorized change creates an immutable audit record in `ApplicationStatusHistory`.
 
 ```mermaid
 stateDiagram-v2
     [*] --> APPLIED : Candidate Submits Application & Resume
 
     APPLIED --> SCREENING : Recruiter Reviews Resume / AI Match Score
-    APPLIED --> REJECTED : Does Not Meet Minimum Qualifications
+    APPLIED --> REJECTED : Profile Declined by Recruiter
     APPLIED --> WITHDRAWN : Candidate Self-Withdrawal
 
-    SCREENING --> SHORTLISTED : Technical Match Confirmed
-    SCREENING --> REJECTED : Profile Declined
+    SCREENING --> SHORTLISTED : Candidate Meets Technical Qualifications
+    SCREENING --> REJECTED : Profile Declined by Recruiter
     SCREENING --> WITHDRAWN : Candidate Self-Withdrawal
 
-    SHORTLISTED --> INTERVIEW_SCHEDULED : Interview Scheduled via Calendar Modal
-    SHORTLISTED --> REJECTED : Candidate Unreachable / Mismatch
+    SHORTLISTED --> INTERVIEW_SCHEDULED : Interview Scheduled via Calendar Dialog
+    SHORTLISTED --> REJECTED : Candidate Unreachable / Skills Discrepancy
     SHORTLISTED --> WITHDRAWN : Candidate Self-Withdrawal
 
-    INTERVIEW_SCHEDULED --> OFFERED : Candidate Cleared Interview Loop
-    INTERVIEW_SCHEDULED --> REJECTED : Failed Technical or Culture Round
-    INTERVIEW_SCHEDULED --> WITHDRAWN : Candidate Accepted Other Offer
+    INTERVIEW_SCHEDULED --> OFFERED : Candidate Successfully Clears Loop
+    INTERVIEW_SCHEDULED --> REJECTED : Candidate Failed Technical/Culture Round
+    INTERVIEW_SCHEDULED --> WITHDRAWN : Candidate Accepted Competing Offer
 
-    OFFERED --> HIRED : Offer Signed & Accepted
-    OFFERED --> REJECTED : Offer Rescinded
-    OFFERED --> WITHDRAWN : Candidate Declined Offer
+    OFFERED --> HIRED : Offer Letter Executed & Accepted
+    OFFERED --> REJECTED : Offer Rescinded Prior to Acceptance
+    OFFERED --> WITHDRAWN : Candidate Declined Offer Terms
 
     REJECTED --> [*]
     WITHDRAWN --> [*]
     HIRED --> [*]
 ```
 
-### State Machine Transition Rules
+### Transition Matrix & Enforcement
 
-| Initial State | Allowed Target States | Permitted Actors | Row Lock Applied |
-| :--- | :--- | :--- | :---: |
-| `APPLIED` | `SCREENING`, `REJECTED`, `WITHDRAWN` | Recruiter, Admin, Candidate (Withdraw only) | Yes (`select_for_update`) |
-| `SCREENING` | `SHORTLISTED`, `REJECTED`, `WITHDRAWN` | Recruiter, Admin, Candidate (Withdraw only) | Yes (`select_for_update`) |
-| `SHORTLISTED` | `INTERVIEW_SCHEDULED`, `REJECTED`, `WITHDRAWN` | Recruiter, Admin, Candidate (Withdraw only) | Yes (`select_for_update`) |
-| `INTERVIEW_SCHEDULED` | `OFFERED`, `REJECTED`, `WITHDRAWN` | Recruiter, Admin, Candidate (Withdraw only) | Yes (`select_for_update`) |
-| `OFFERED` | `HIRED`, `REJECTED`, `WITHDRAWN` | Recruiter, Admin, Candidate (Withdraw only) | Yes (`select_for_update`) |
-| `REJECTED` | *(Terminal State — No transitions allowed)* | None | N/A |
-| `WITHDRAWN` | *(Terminal State — No transitions allowed)* | None | N/A |
-| `HIRED` | *(Terminal State — No transitions allowed)* | None | N/A |
+| Source State | Target State | Authorized Actor | Row Lock Applied | Action Taken |
+| :--- | :--- | :--- | :---: | :--- |
+| `APPLIED` | `SCREENING` | Recruiter, Admin | Yes (`select_for_update`) | Moves candidate into active review. |
+| `APPLIED` | `REJECTED` | Recruiter, Admin | Yes (`select_for_update`) | Closes application with optional feedback. |
+| `APPLIED` | `WITHDRAWN` | Candidate | Yes (`select_for_update`) | Candidate removes self from pool. |
+| `SCREENING` | `SHORTLISTED` | Recruiter, Admin | Yes (`select_for_update`) | Qualifies candidate for scheduling. |
+| `SHORTLISTED` | `INTERVIEW_SCHEDULED` | Recruiter, Admin | Yes (`select_for_update`) | Triggers interview modal and sends notification. |
+| `INTERVIEW_SCHEDULED` | `OFFERED` | Recruiter, Admin | Yes (`select_for_update`) | Advances candidate to compensation offer. |
+| `OFFERED` | `HIRED` | Recruiter, Admin | Yes (`select_for_update`) | Marks requisition fulfillment. |
+| Any Active | `WITHDRAWN` | Candidate | Yes (`select_for_update`) | Candidate self-service withdrawal. |
+| Any Active | `REJECTED` | Recruiter, Admin | Yes (`select_for_update`) | Terminal rejection with audit log. |
 
 ---
 
-## 4. Engineering Highlights & Hardened Security Controls
+## 4. Engineering Highlights & Hardened Security Controls (The Audit Story)
 
-### P0 Security Controls & Threat Mitigations
+During a comprehensive architectural and application security audit, SmartATS was hardened against critical vulnerabilities across identity, authorization, file processing, database concurrency, and resource constraints:
 
-SmartATS incorporates enterprise-grade defensive architecture addressing OWASP Top 10 vulnerabilities:
+### 1. Role Escalation Defense (`SEC-01` & `SEC-02`)
+- **Vulnerability:** Unauthenticated or authenticated users could theoretically elevate privileges to `ADMIN` by modifying payloads sent to registration or profile update endpoints.
+- **Remediation:**
+  - In [accounts/serializers.py](file:///Users/manthanshah/Documents/SmartATS/backend/accounts/serializers.py), `UserSerializer.Meta.read_only_fields` marks `role` as strictly immutable, preventing any `PATCH /api/auth/me/` from modifying user roles.
+  - In `RegisterSerializer.validate_role`, registration is constrained to a closed enum: `[CANDIDATE, RECRUITER]`. Any payload attempting to supply `role="ADMIN"` is immediately rejected with an HTTP 400 `ValidationError`.
 
-1. **Elimination of Vertical Privilege Escalation (`SEC-01` & `SEC-02`):**
-   - In `backend/accounts/serializers.py`, `UserSerializer.Meta.read_only_fields` marks `role` as strictly immutable. Malicious users cannot elevate their role to `ADMIN` or `RECRUITER` via `PATCH /api/auth/me/`.
-   - `RegisterSerializer.validate_role` enforces a closed enum: `[CANDIDATE, RECRUITER]`. Any payload containing `role="ADMIN"` is immediately rejected with an HTTP 400 `ValidationError`.
-2. **Tenant Isolation & Anti-IDOR Protections (`SEC-04` & `SEC-05`):**
-   - **Job Requisitions:** `JobSerializer.validate` verifies that the requesting recruiter belongs to the specified company. A recruiter from Company A cannot inject or modify requisitions for Company B.
-   - **Interview Scheduling:** `InterviewSerializer.validate` validates that the target application belongs to the recruiter's tenant. Cross-tenant interview scheduling attempts are rejected with an explicit HTTP 400.
-3. **Binary Magic-Byte Inspection (`SEC-03`):**
-   - In `backend/applications/serializers.py` (`ResumeSerializer.validate_file`), file uploads undergo a 4-tier validation pipeline:
-     1. File size check (max 5MB limit).
-     2. Extension validation (`.pdf`, `.docx`).
-     3. MIME type inspection.
-     4. **Magic-byte binary inspection:** The raw file header is read to ensure true binary compliance (`b"%PDF-"` for PDF documents; `b"PK\x03\x04"` for Office Open XML / DOCX zip containers). Executables renamed to `.pdf` or polyglot files are rejected before touching disk or S3.
+### 2. Multi-Tenant IDOR Prevention (`SEC-04` & `SEC-05`)
+- **Vulnerability:** Recruiters could manipulate target IDs to publish requisitions under foreign companies or schedule interviews on applications belonging to other enterprise tenants.
+- **Remediation:**
+  - In [jobs/serializers.py](file:///Users/manthanshah/Documents/SmartATS/backend/jobs/serializers.py) (`JobSerializer.validate`), the recruiter's company profile is verified against the job's company ID. Cross-tenant job creation is rejected.
+  - In [interviews/serializers.py](file:///Users/manthanshah/Documents/SmartATS/backend/interviews/serializers.py) (`InterviewSerializer.validate`), the target application's company is verified against `request.user.recruiter_profile.company`. Unauthorized recruiters receive an explicit permission error.
 
-### Concurrency & Transactional Integrity
+### 3. Binary Magic-Byte Stream Inspection (`SEC-06`)
+- **Vulnerability:** Attackers could upload malicious executables or polyglot files disguised with `.pdf` or `.docx` extensions, bypassing standard MIME-type checks.
+- **Remediation:**
+  - In [applications/serializers.py](file:///Users/manthanshah/Documents/SmartATS/backend/applications/serializers.py) (`ResumeSerializer.validate_file`), raw file headers are read to inspect magic bytes:
+    - **PDF Documents:** Must begin with signature `b"%PDF-"`.
+    - **Office Open XML (DOCX):** Must begin with PKZip signature `b"PK\x03\x04"`.
+  - **Stream Rewind Enforcement:** The file pointer is immediately rewound (`file_obj.seek(0)`) after reading initial bytes inside a `finally` block and verified before `Resume.objects.create(...)`. This prevents truncated 0-byte saves in downstream storage backends.
 
-- **Row-Level Database Locking (`DB-FIX-01`):** High-volume ATS workflows can trigger race conditions when a recruiter advances a candidate while the candidate attempts to withdraw. SmartATS wraps all transitions in `@transaction.atomic` and executes `Application.objects.select_for_update().get(id=application.id)`, guaranteeing serialized ACID isolation.
-- **Single-Pass ORM Aggregations (`PERF-FIX-01`):** The recruiter analytics dashboard (`RecruiterAnalyticsViewSet`) replaces iterative Python loops with single-pass database aggregations (`annotate(app_count=Count('applications'))`), reducing SQL roundtrips from $O(N)$ to $O(1)$.
+### 4. Concurrency Safety & Row Locking (`DB-FIX-01`)
+- **Vulnerability:** Simultaneous requests (e.g., recruiter advancing a candidate while candidate withdraws) resulted in race conditions, overwriting status history or putting applications into invalid dual states.
+- **Remediation:**
+  - In [applications/services.py](file:///Users/manthanshah/Documents/SmartATS/backend/applications/services.py), state machine transitions are wrapped in `@transaction.atomic` with pessimistic row-level locking:
+    ```python
+    locked_application = Application.objects.select_for_update().get(id=application.id)
+    ```
+  - Transition validation is evaluated against the fresh, locked database row before committing updates and writing the audit record.
 
-### Memory-Constrained Optimization (512MB RAM Target)
-
-Operating machine learning models inside 512MB RAM environments (e.g., Render free tier) presents severe OOM risks. SmartATS implements a robust 3-tier memory safety strategy:
-
-```text
-               Input Resume Text
-                       |
-        Is ENABLE_HEAVY_EMBEDDINGS True?
-             /                  \
-          [YES]                [NO]
-           /                      \
-  Lazy-load PyTorch          Deterministic 384-Dim
-  & SentenceTransformer      Feature-Hashing Vectorizer
-  (torch.set_num_threads(1)) (Unigrams + Bigrams, L2 Norm)
-           |                      |
-  Generate Embedding         Generate Embedding
-  Peak RAM: ~380MB           Peak RAM: < 100KB
-           |                      |
-  del model; gc.collect()         gc.collect()
-           \                      /
-            v                    v
-          Store vector & compute cosine similarity
-```
-
-1. **Lazy Loading of Heavy Dependencies:** PyTorch and `SentenceTransformer` are never imported at the module level. They are imported dynamically inside task execution only when `ENABLE_HEAVY_EMBEDDINGS=True`.
-2. **Deterministic 384-Dimensional Feature Hashing Fallback:** Under memory constraints, SmartATS utilizes a deterministic n-gram hashing vectorizer. It computes sign-hashed unigrams and bigrams projected onto 384 dimensions with $L_2$ normalization. It consumes **under 100KB of RAM** while preserving semantic and lexical keyword overlap.
-3. **Celery Worker Memory Guards:**
-   ```python
-   CELERY_WORKER_CONCURRENCY = 1
-   CELERY_WORKER_MAX_TASKS_PER_CHILD = 50
-   CELERY_WORKER_MAX_MEMORY_PER_CHILD = 120000  # 120MB threshold auto-restart
-   ```
+### 5. Memory Capping & Low-Footprint Profiling (512MB RAM Constraint)
+- **Challenge:** Hosting PyTorch, Transformers, spaCy, and Gunicorn on Render's 512MB free tier leads to out-of-memory (OOM) process termination during embedding generation.
+- **Remediation:**
+  - **Lazy ML Instantiation:** PyTorch and `SentenceTransformer` are never imported at the module level. They are loaded dynamically within worker tasks only when `ENABLE_HEAVY_EMBEDDINGS=True`, with `torch.set_num_threads(1)` and immediate post-execution cleanup (`del model; gc.collect()`).
+  - **Deterministic 384-Dim Hashing Fallback:** Under memory constraints, SmartATS employs a lightweight unigram/bigram sign-hashing vectorizer. It projects text into 384-dimensional $L_2$-normalized vectors consuming **$< 100\text{KB}$ RAM** while retaining lexical and semantic relevance.
+  - **Process Tuning:** Celery worker concurrency is capped at 1 (`--concurrency=1`), with `CELERY_WORKER_MAX_TASKS_PER_CHILD=50` and `CELERY_WORKER_MAX_MEMORY_PER_CHILD=120000` (120MB threshold auto-restart), stabilizing the base boot footprint at $\sim 72\text{MB}$.
 
 ### Transparent AI Hybrid Matching Formula
 
-Candidate suitability is calculated through a hybrid, explainable formula:
+Candidate ranking is computed via an explainable, objective formula:
 
 $$\text{Overall Score} = 0.65 \times \text{Semantic Score} + 0.35 \times \text{Skill Overlap Score}$$
 
-Where:
-- $\text{Semantic Score} = \max\left(0, \min\left(100, \frac{\cos(\vec{u}, \vec{v}) + 1}{2} \times 100\right)\right)$
-- $\text{Skill Overlap Score} = \frac{|\text{Matched Skills}|}{|\text{Target Job Skills}|} \times 100$
+$$\text{Semantic Score} = \max\left(0, \min\left(100, \frac{\cos(\vec{u}, \vec{v}) + 1}{2} \times 100\right)\right)$$
+
+$$\text{Skill Overlap Score} = \frac{|\text{Extracted Skills} \cap \text{Required Job Skills}|}{|\text{Required Job Skills}|} \times 100$$
 
 ---
 
-## 5. API Specification & Core Endpoints
+## 5. API Contract Reference
 
-All primary API routes are versioned and documented under `/api/`. Unauthenticated requests to protected endpoints return `401 Unauthorized`.
+All API routes are served under `/api/` with JSON payloads. Authenticated routes require an `Authorization: Bearer <access_token>` header.
 
-| Method | Endpoint | Allowed Roles | Description | Request / Query Params |
+| Method | Endpoint | Allowed Roles | Description | Request / Payload Sample |
 | :--- | :--- | :--- | :--- | :--- |
-| `POST` | `/api/auth/register/` | Public | Register new Candidate or Recruiter account | `{ email, password, role, first_name, last_name, company_name }` |
-| `POST` | `/api/auth/login/` | Public | Obtain JWT Access (15m) and Refresh (7d) tokens | `{ email, password }` |
-| `POST` | `/api/auth/refresh/` | Public | Refresh expired access token | `{ refresh }` |
-| `POST` | `/api/auth/logout/` | Authenticated | Blacklist active refresh token | `{ refresh }` |
+| `POST` | `/api/auth/register/` | Public | Register new Candidate or Recruiter | `{"email": "...", "password": "...", "role": "CANDIDATE"}` |
+| `POST` | `/api/auth/login/` | Public | Obtain JWT Access (15m) and Refresh (7d) tokens | `{"email": "...", "password": "..."}` |
+| `POST` | `/api/auth/refresh/` | Public | Rotate expired access token | `{"refresh": "..."}` |
+| `POST` | `/api/auth/logout/` | Authenticated | Blacklist active refresh token | `{"refresh": "..."}` |
 | `GET` | `/api/auth/me/` | Authenticated | Retrieve current user profile and role | None |
-| `GET` | `/api/jobs/` | Public | Browse published, active job postings | `?search=react&location=remote&job_type=FULL_TIME` |
-| `POST` | `/api/jobs/` | Recruiter, Admin | Post new requisition under recruiter's verified tenant | `{ title, department, location, job_type, description, skills }` |
-| `GET` | `/api/companies/` | Public | List verified hiring companies | `?industry=Enterprise Cloud` |
-| `POST` | `/api/resumes/` | Candidate | Upload candidate resume with binary validation | `multipart/form-data: { file }` |
-| `GET` | `/api/applications/` | Candidate, Recruiter | Filter applications (Candidates see own; Recruiters see tenant) | `?job_id={uuid}&status=SHORTLISTED` |
-| `POST` | `/api/applications/` | Candidate | Apply for an active requisition | `{ job_id, resume_id, cover_letter }` |
-| `POST` | `/api/applications/{id}/transition/` | Recruiter, Admin, Candidate | Execute validated state machine transition | `{ target_stage: "SHORTLISTED", notes: "Approved" }` |
-| `GET` | `/api/applications/{id}/match_score/` | Recruiter, Candidate | Get explainable AI match breakdown | None |
+| `GET` | `/api/jobs/` | Public | Filter published, active job openings | `?search=fullstack&location=remote&job_type=FULL_TIME` |
+| `POST` | `/api/jobs/` | Recruiter, Admin | Publish new requisition under verified tenant | `{"title": "...", "department": "...", "description": "..."}` |
+| `GET` | `/api/companies/` | Public | List verified hiring organizations | `?industry=Enterprise Cloud` |
+| `POST` | `/api/resumes/` | Candidate | Upload resume with magic-byte validation | `multipart/form-data: { file: document.pdf }` |
+| `GET` | `/api/applications/` | Candidate, Recruiter | Scoped application list (Candidate: own; Recruiter: tenant) | `?job_id={uuid}&status=SHORTLISTED` |
+| `POST` | `/api/applications/` | Candidate | Apply to an active requisition | `{"job_id": "...", "resume_id": "...", "cover_letter": "..."}` |
+| `POST` | `/api/applications/{id}/transition/` | Recruiter, Candidate | Advance stage or execute candidate withdrawal | `{"target_stage": "SHORTLISTED", "notes": "Approved"}` |
+| `GET` | `/api/applications/{id}/match_score/` | Recruiter, Candidate | Fetch explainable AI score & skill breakdown | None |
 | `GET` | `/api/interviews/` | Candidate, Recruiter | List interviews for tenant or candidate | `?application_id={uuid}` |
-| `POST` | `/api/interviews/` | Recruiter, Admin | Schedule interview round and notify candidate | `{ application_id, round_name, scheduled_start, scheduled_end, meeting_url }` |
-| `GET` | `/api/notifications/` | Authenticated | Fetch current user notifications | `?is_read=false` |
-| `POST` | `/api/notifications/mark_all_read/` | Authenticated | Mark all user notifications as read | None |
-| `GET` | `/api/analytics/recruiter/` | Recruiter, Admin | Single-pass requisition pipeline metrics | None |
-| `GET` | `/healthz` | Public | Infrastructure health check (PostgreSQL & Redis) | None |
+| `POST` | `/api/interviews/` | Recruiter, Admin | Schedule interview round and notify candidate | `{"application_id": "...", "scheduled_start": "...", ...}` |
+| `GET` | `/api/notifications/` | Authenticated | Fetch notifications for logged-in user | `?is_read=false` |
+| `POST` | `/api/notifications/mark_all_read/` | Authenticated | Bulk mark all notifications as read | None |
+| `GET` | `/api/analytics/recruiter/` | Recruiter, Admin | Fetch single-pass pipeline metrics for company | None |
+| `GET` | `/healthz` | Public | Verify PostgreSQL connectivity and Redis ping | None (Returns `{"status": "healthy", ...}`) |
 
 ---
 
-## 6. Local Development & Deployment Runbook
+## 6. Local Setup & Production Verification Runbook
 
 ### Prerequisites
 
 - **Python:** 3.12+
 - **Node.js:** 20.x or 22.x LTS (npm 10+)
-- **Database:** PostgreSQL 16+ (with `pgvector` extension)
-- **Cache/Broker:** Redis 7+
-- **Docker & Compose:** Optional for containerized workflow
+- **PostgreSQL:** 16+ (with `pgvector` extension)
+- **Redis:** 7+
+- **Docker & Docker Compose:** Optional for containerized setup
 
 ---
 
 ### Environment Configuration Matrix
 
-Create a `.env` file in the project root:
+Create a root `.env` file for local development:
 
 ```ini
-# ==============================================================================
-# SMARTATS BACKEND CONFIGURATION
-# ==============================================================================
+# Core Backend Settings
 DEBUG=True
-SECRET_KEY=django-insecure-your-local-dev-secret-key-replace-in-production
+SECRET_KEY=django-insecure-dev-secret-key-change-in-production
 ALLOWED_HOSTS=localhost,127.0.0.1,.onrender.com
 
-# Database Connection (Neon / Supabase / Local PostgreSQL)
+# Persistence Connections
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/smartats_db
-
-# Redis Connection (Celery Broker & Cache)
 REDIS_URL=redis://localhost:6379/0
 
-# Optional: Cloud Object Storage (Defaults to FileSystemStorage when False)
+# Optional: Cloud Storage (Defaults to FileSystemStorage when False)
 USE_S3=False
 AWS_STORAGE_BUCKET_NAME=smartats-resumes
 AWS_S3_REGION_NAME=us-east-1
-AWS_ACCESS_KEY_ID=your-aws-access-key-id
-AWS_SECRET_ACCESS_KEY=your-aws-secret-access-key
-AWS_QUERYSTRING_EXPIRE=3600
 
-# CORS Allowed Origins
+# CORS & Gateway
 CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,https://smart-ats-eta.vercel.app
 
-# Machine Learning & Celery Configuration
+# Worker Memory Constraints
 ENABLE_HEAVY_EMBEDDINGS=False
 CELERY_WORKER_CONCURRENCY=1
 
-# ==============================================================================
-# SMARTATS FRONTEND CONFIGURATION (frontend/.env)
-# ==============================================================================
+# Frontend Configuration (frontend/.env)
 VITE_API_URL=http://localhost:8000/api
 ```
 
 ---
 
-### Option A: Local Bare-Metal Setup
+### Step-by-Step Setup
 
-#### 1. Backend Setup
+#### 1. Backend API Service
 
 ```bash
-# Navigate to backend directory
 cd backend
 
-# Create and activate Python virtual environment
+# Create and activate virtual environment
 python3.12 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 # Install dependencies
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# Run database migrations
+# Apply migrations
 python manage.py migrate
 
-# Seed database with realistic companies, users, jobs, and applications
+# Seed database with realistic companies, recruiters, candidates, and AI matches
 python manage.py seed_ats
 
-# Run development server
+# Start API server
 python manage.py runserver 0.0.0.0:8000
 ```
 
-#### 2. Start Celery Asynchronous Worker (in a separate terminal)
+#### 2. Asynchronous Celery Worker (in a separate terminal)
 
 ```bash
 cd backend
@@ -332,26 +326,25 @@ source .venv/bin/activate
 celery -A smartats worker --loglevel=info --concurrency=1
 ```
 
-#### 3. Frontend Setup
+#### 3. Frontend React Application
 
 ```bash
-# Navigate to frontend directory
 cd frontend
 
-# Install npm dependencies
+# Install dependencies
 npm install
 
-# Start Vite React development server
+# Start development server
 npm run dev
 ```
 
-Visit `http://localhost:5173` to access the application.
+The application will be accessible at `http://localhost:5173`.
 
 ---
 
-### Option B: Docker Compose Setup
+### Containerized Setup (Docker Compose)
 
-Run the entire distributed stack (PostgreSQL with `pgvector`, Redis 7, Django API, Celery Worker) with a single command:
+To spin up the entire distributed environment (PostgreSQL 16 + pgvector, Redis 7, Django API Gateway, and Celery Worker):
 
 ```bash
 cd infra
@@ -360,62 +353,69 @@ docker-compose up --build
 
 ---
 
-### Pre-Seeded Test Credentials
+### Pre-Seeded Demonstration Accounts
 
-Running `python manage.py seed_ats` populates the database with realistic organizations and test personas:
+Running `python manage.py seed_ats` provisions the following accounts (password for all: `Password123!`):
 
-| Role | Email Address | Password | Organization / Tenant | Pre-Seeded Context |
+| Role | Email Address | Password | Company / Tenant | Pre-Configured State |
 | :--- | :--- | :--- | :--- | :--- |
-| **Admin** | `admin@smartats.com` | `Password123!` | System-wide | Superuser privileges |
+| **Admin** | `admin@smartats.com` | `Password123!` | Platform-wide | Superuser with administrative access |
 | **Recruiter** | `recruiter@technova.com` | `Password123!` | TechNova Solutions | Active requisitions & candidate pipeline |
 | **Candidate** | `candidate@test.com` | `Password123!` | Public Candidate | Applied to Senior Full-Stack Engineer |
-| **Candidate** | `sarah.chen@example.com` | `Password123!` | Public Candidate | AI Platform Engineer applicant (95% Match) |
+| **Candidate** | `sarah.chen@example.com` | `Password123!` | Public Candidate | AI Platform applicant (95% Match) |
 | **Candidate** | `alex.rivera@example.com` | `Password123!` | Public Candidate | Cloud Architect applicant (88% Match) |
 
 ---
 
-## 7. Verification & Quality Assurance Suite
+## 7. Automated Test Suite & Code Quality Verification
 
-SmartATS maintains a strict testing and linting bar across both backend and frontend layers:
+SmartATS enforces 100% pass rates across both backend and frontend test suites prior to deployment:
 
 ```bash
-# ---------------------------------------------------------
-# 1. Backend Unit & Integration Tests (75 tests)
-# ---------------------------------------------------------
+# -------------------------------------------------------------
+# 1. Run Backend Automated Test Suite (75 Tests)
+# -------------------------------------------------------------
 cd backend
 python manage.py test
 
-# ---------------------------------------------------------
-# 2. Backend Code Style & Static Analysis
-# ---------------------------------------------------------
+# -------------------------------------------------------------
+# 2. Verify Backend Code Formatting & Linting
+# -------------------------------------------------------------
 black --check .
 flake8
 
-# ---------------------------------------------------------
-# 3. Frontend Automated Tests (Vitest + Testing Library)
-# ---------------------------------------------------------
+# -------------------------------------------------------------
+# 3. Run Frontend Automated Test Suite (6 Tests)
+# -------------------------------------------------------------
 cd frontend
 npm test
 
-# ---------------------------------------------------------
-# 4. Frontend Production TypeScript Compilation & Bundle Build
-# ---------------------------------------------------------
+# -------------------------------------------------------------
+# 4. Verify Frontend TypeScript Compilation & Production Build
+# -------------------------------------------------------------
 npm run build
 ```
 
-### Test Suite Coverage Breakdown
+### Test Coverage Summary
 
-- **Total Automated Tests:** 81/81 Passing
-  - **75 Backend Tests:** Model validations, JWT authentication flows, tenant isolation, anti-IDOR checks, magic-byte inspection, application state transitions with row locking, and analytics aggregations.
-  - **6 Frontend Tests:** Role-based `AuthGuard` route security, redirection logic, unauthenticated prevention, notification counter badge states, and interactive bell dropdown behavior.
+- **Backend (75/75 Passed):**
+  - Application state machine deterministic transitions, terminal state enforcement, and row-level locking.
+  - Magic-byte validation on resume uploads and file stream rewinds.
+  - Multi-tenant IDOR access isolation across candidates, recruiters, and companies.
+  - Role escalation prevention on user updates and user registration.
+  - Single-pass recruiter analytics SQL aggregation queries.
+- **Frontend (6/6 Passed):**
+  - Role-based route protection via `AuthGuard` (unauthenticated redirection, role authorization).
+  - `NotificationBell` state handling, unread badge rendering, and dropdown interactions.
+  - TypeScript build verification with zero compilation warnings.
 
 ---
 
-## 8. Deployment Architecture (Render & Vercel)
+## 8. Deployment Topology (Render & Vercel)
 
-- **Backend Web Service (`smartats-api`):** Deployed on Render using the hardened non-root [backend/Dockerfile](file:///Users/manthanshah/Documents/SmartATS/backend/Dockerfile) with Gunicorn (`--workers 1 --threads 2`).
-- **Asynchronous Worker (`smartats-celery`):** Deployed on Render via [render.yaml](file:///Users/manthanshah/Documents/SmartATS/render.yaml) connected to Render Redis.
-- **Frontend SPA (`smart-ats`):** Deployed on Vercel with automatic edge code-splitting, route chunking, and push-state SPA rewrites.
+- **Backend API (`smartats-api`):** Hosted on Render using the hardened, non-root [backend/Dockerfile](file:///Users/manthanshah/Documents/SmartATS/backend/Dockerfile) with Gunicorn (`--workers 1 --threads 2`).
+- **Asynchronous Worker (`smartats-celery`):** Managed on Render using [render.yaml](file:///Users/manthanshah/Documents/SmartATS/render.yaml) connected to Render Redis.
+- **Frontend SPA (`smart-ats`):** Hosted on Vercel with automatic edge code-splitting, route chunking, and push-state SPA rewrites.
 
 ---
 
