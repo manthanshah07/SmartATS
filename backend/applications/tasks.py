@@ -1,4 +1,6 @@
+import gc
 import hashlib
+import logging
 import os
 import re
 from celery import shared_task
@@ -11,6 +13,8 @@ from applications.models import (
     ResumeParsedData,
 )
 from jobs.models import JobEmbedding
+
+logger = logging.getLogger(__name__)
 
 # Core common skills to recognize if spaCy model isn't pre-downloaded
 COMMON_TECH_SKILLS = [
@@ -126,31 +130,84 @@ def extract_skills_from_text(text, target_skills=None):
     return sorted(list(found_skills))
 
 
+def generate_lightweight_embedding(text, dimensions=384):
+    """
+    Deterministic, low-memory 384-dimensional feature-hashing embedding vector.
+    Extracts unigrams and bigrams, applies sign-hashing and L2 normalization.
+    Consumes negligible memory (< 100KB) and preserves keyword/semantic overlap for matching.
+    """
+    clean_text = text.strip() or "empty document"
+    words = [re.sub(r"[^\w]", "", w.lower()) for w in clean_text.split()]
+    words = [w for w in words if len(w) > 1]
+
+    vec = np.zeros(dimensions, dtype=np.float32)
+    if not words:
+        seed = int(hashlib.md5(clean_text.encode("utf-8")).hexdigest(), 16) % (2**32)
+        rng = np.random.default_rng(seed)
+        v = rng.standard_normal(dimensions)
+        norm = np.linalg.norm(v)
+        return (v / norm).tolist() if norm > 0 else v.tolist()
+
+    for i, word in enumerate(words):
+        h1 = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16)
+        idx1 = h1 % dimensions
+        sign1 = 1.0 if ((h1 >> 16) & 1) else -1.0
+        vec[idx1] += sign1
+
+        if i < len(words) - 1:
+            bigram = f"{word}_{words[i+1]}"
+            h2 = int(hashlib.md5(bigram.encode("utf-8")).hexdigest(), 16)
+            idx2 = h2 % dimensions
+            sign2 = 1.0 if ((h2 >> 16) & 1) else -1.0
+            vec[idx2] += sign2 * 0.7
+
+    norm = np.linalg.norm(vec)
+    if norm > 0:
+        vec = vec / norm
+    return vec.tolist()
+
+
 def generate_dense_embedding(text, dimensions=384):
     """
     Generates a 384-dimensional dense semantic embedding vector.
-    Uses sentence-transformers/all-MiniLM-L6-v2, with fallback to deterministic vector.
+    Lazily loads SentenceTransformer if explicitly enabled via ENABLE_HEAVY_EMBEDDINGS;
+    otherwise uses an intelligent lightweight feature-hashing fallback.
+    Executes garbage collection immediately after generation.
     """
     clean_text = text.strip() or "empty document"
-    try:
-        from sentence_transformers import SentenceTransformer
 
-        # Load sentence transformer model
-        model = SentenceTransformer("all-MiniLM-L6-v2")
-        vec = model.encode(clean_text, convert_to_numpy=True)
-        # Normalize vector
-        norm = np.linalg.norm(vec)
-        if norm > 0:
-            vec = vec / norm
-        return vec.tolist()
-    except Exception:
-        # Fallback deterministic pseudo-embedding (384-dim)
-        # for offline/testing environments
-        seed = int(hashlib.md5(clean_text.encode("utf-8")).hexdigest(), 16) % (2**32)
-        rng = np.random.default_rng(seed)
-        vec = rng.standard_normal(dimensions)
-        vec = vec / np.linalg.norm(vec)
-        return vec.tolist()
+    # Constrained environments (e.g. Render 512MB free tier) default to lightweight embeddings
+    # to guarantee peak RSS stays well below container limits.
+    use_heavy_model = os.getenv("ENABLE_HEAVY_EMBEDDINGS", "False").lower() in ("true", "1", "yes")
+
+    if use_heavy_model:
+        try:
+            # Lazy import inside function
+            import torch
+
+            torch.set_num_threads(1)
+            from sentence_transformers import SentenceTransformer
+
+            # Load model lazily
+            model = SentenceTransformer("all-MiniLM-L6-v2")
+            vec = model.encode(clean_text, convert_to_numpy=True)
+            del model
+            gc.collect()
+
+            norm = np.linalg.norm(vec)
+            if norm > 0:
+                vec = vec / norm
+            return vec.tolist()
+        except Exception as e:
+            logger.warning(
+                f"SentenceTransformer failed or memory-constrained ({e}). "
+                "Using lightweight feature-hashing embedding fallback."
+            )
+
+    # Lightweight, fast fallback vector generator (< 100KB memory footprint)
+    vec = generate_lightweight_embedding(clean_text, dimensions=dimensions)
+    gc.collect()
+    return vec
 
 
 @shared_task(name="applications.tasks.process_resume_and_match")
@@ -268,5 +325,8 @@ def process_resume_and_match(application_id):
                 "missing_skills": missing_skills,
             },
         )
+
+        # Force garbage collection after intensive embedding generation & scoring
+        gc.collect()
 
     return f"Processed application {application_id}: Score {overall_score:.2f}%"

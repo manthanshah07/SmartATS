@@ -28,7 +28,7 @@ services:
     name: smartats-celery
     runtime: python
     buildCommand: cd backend && pip install -r requirements.txt
-    startCommand: cd backend && celery -A smartats worker --loglevel=info
+    startCommand: cd backend && celery -A smartats worker --loglevel=info --concurrency=1
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
