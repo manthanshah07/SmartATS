@@ -3,6 +3,7 @@ from django.conf import settings
 from django.db import models
 from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
+from pgvector.django import VectorField
 
 
 class Company(models.Model):
@@ -131,3 +132,23 @@ class JobSkill(models.Model):
     def __str__(self):
         tier = "Required" if self.is_required else "Preferred"
         return f"{self.skill_name} ({tier}) - {self.job.title}"
+
+
+class JobEmbedding(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job = models.OneToOneField(
+        Job,
+        on_delete=models.CASCADE,
+        related_name="embedding_record",
+    )
+    embedding = VectorField(dimensions=384)
+    model_version = models.CharField(max_length=50, default="all-MiniLM-L6-v2")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "job_embeddings"
+        verbose_name = _("job embedding")
+        verbose_name_plural = _("job embeddings")
+
+    def __str__(self):
+        return f"JobEmbedding for {self.job.title}"

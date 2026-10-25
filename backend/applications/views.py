@@ -69,6 +69,7 @@ class ApplicationViewSet(viewsets.ModelViewSet):
                 "job__company",
                 "candidate",
                 "resume",
+                "match_score",
             )
             .prefetch_related("status_history")
             .distinct()

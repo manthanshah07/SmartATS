@@ -3,6 +3,7 @@ from django.conf import settings
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from jobs.models import Job
+from pgvector.django import VectorField
 
 
 class Resume(models.Model):
@@ -141,3 +142,86 @@ class ApplicationStatusHistory(models.Model):
             f"App {self.application_id}: "
             f"{self.old_status or 'START'} -> {self.new_status}"
         )
+
+
+class ResumeParsedData(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.OneToOneField(
+        Resume,
+        on_delete=models.CASCADE,
+        related_name="parsed_data",
+    )
+    extracted_text = models.TextField()
+    skills = models.JSONField(default=list, blank=True)
+    experience_years = models.DecimalField(
+        max_digits=4, decimal_places=1, null=True, blank=True
+    )
+    education = models.JSONField(default=list, blank=True)
+    parsed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "resume_parsed_data"
+        verbose_name = _("resume parsed data")
+        verbose_name_plural = _("resume parsed data")
+
+    def __str__(self):
+        return f"ParsedData for Resume {self.resume_id}"
+
+
+class ResumeEmbedding(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    resume = models.OneToOneField(
+        Resume,
+        on_delete=models.CASCADE,
+        related_name="embedding_record",
+    )
+    embedding = VectorField(dimensions=384)
+    model_version = models.CharField(max_length=50, default="all-MiniLM-L6-v2")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "resume_embeddings"
+        verbose_name = _("resume embedding")
+        verbose_name_plural = _("resume embeddings")
+
+    def __str__(self):
+        return f"Embedding for Resume {self.resume_id} ({self.model_version})"
+
+
+class MatchScore(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    application = models.OneToOneField(
+        Application,
+        on_delete=models.CASCADE,
+        related_name="match_score",
+    )
+    overall_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        help_text="Weighted match score (0-100)",
+    )
+    semantic_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        help_text="Embedding cosine similarity (0-100)",
+    )
+    skill_overlap_score = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        help_text="Skill overlap ratio (0-100)",
+    )
+    matched_skills = models.JSONField(default=list, blank=True)
+    missing_skills = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "match_scores"
+        verbose_name = _("match score")
+        verbose_name_plural = _("match scores")
+        ordering = ["-overall_score"]
+
+    def __str__(self):
+        cand_email = self.application.candidate.email
+        job_title = self.application.job.title
+        return f"MatchScore: {self.overall_score}% ({cand_email} -> {job_title})"

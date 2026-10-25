@@ -2,7 +2,12 @@ import os
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from accounts.models import User
-from applications.models import Application, ApplicationStatusHistory, Resume
+from applications.models import (
+    Application,
+    ApplicationStatusHistory,
+    MatchScore,
+    Resume,
+)
 from applications.services import ApplicationStateMachine
 from jobs.models import Job
 from jobs.serializers import JobSerializer
@@ -103,6 +108,22 @@ class ApplicationStatusHistorySerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class MatchScoreSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MatchScore
+        fields = [
+            "id",
+            "overall_score",
+            "semantic_score",
+            "skill_overlap_score",
+            "matched_skills",
+            "missing_skills",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+
 class ApplicationSerializer(serializers.ModelSerializer):
     job = JobSerializer(read_only=True)
     job_id = serializers.PrimaryKeyRelatedField(
@@ -119,6 +140,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
     candidate_email = serializers.ReadOnlyField(source="candidate.email")
     candidate_id = serializers.ReadOnlyField(source="candidate.id")
     status_history = ApplicationStatusHistorySerializer(many=True, read_only=True)
+    match_score = MatchScoreSerializer(read_only=True)
     notes = serializers.CharField(
         write_only=True, required=False, allow_blank=True, default=""
     )
@@ -135,6 +157,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
             "resume_id",
             "status",
             "cover_letter",
+            "match_score",
             "status_history",
             "notes",
             "created_at",
@@ -144,6 +167,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
             "id",
             "candidate_id",
             "candidate_email",
+            "match_score",
             "created_at",
             "updated_at",
         ]
@@ -215,6 +239,12 @@ class ApplicationSerializer(serializers.ModelSerializer):
             new_status=Application.Status.APPLIED,
             notes=notes or "Application submitted.",
         )
+
+        # Trigger asynchronous AI matching and resume parsing pipeline
+        from applications.tasks import process_resume_and_match
+
+        process_resume_and_match.delay(str(application.id))
+
         return application
 
     def update(self, instance, validated_data):

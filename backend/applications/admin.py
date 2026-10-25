@@ -2,7 +2,10 @@ from django.contrib import admin
 from applications.models import (
     Application,
     ApplicationStatusHistory,
+    MatchScore,
     Resume,
+    ResumeEmbedding,
+    ResumeParsedData,
 )
 
 
@@ -17,6 +20,20 @@ class ApplicationStatusHistoryInline(admin.TabularInline):
         "created_at",
     )
     can_delete = False
+
+
+class MatchScoreInline(admin.StackedInline):
+    model = MatchScore
+    can_delete = False
+    readonly_fields = (
+        "overall_score",
+        "semantic_score",
+        "skill_overlap_score",
+        "matched_skills",
+        "missing_skills",
+        "created_at",
+        "updated_at",
+    )
 
 
 @admin.register(Resume)
@@ -47,7 +64,7 @@ class ApplicationAdmin(admin.ModelAdmin):
         "job__title",
         "job__company__name",
     )
-    inlines = [ApplicationStatusHistoryInline]
+    inlines = [MatchScoreInline, ApplicationStatusHistoryInline]
 
 
 @admin.register(ApplicationStatusHistory)
@@ -61,3 +78,30 @@ class ApplicationStatusHistoryAdmin(admin.ModelAdmin):
     )
     list_filter = ("old_status", "new_status")
     search_fields = ("application__candidate__email", "notes")
+
+
+@admin.register(ResumeParsedData)
+class ResumeParsedDataAdmin(admin.ModelAdmin):
+    list_display = ("resume", "parsed_at")
+    search_fields = ("resume__candidate__email", "extracted_text")
+
+
+@admin.register(ResumeEmbedding)
+class ResumeEmbeddingAdmin(admin.ModelAdmin):
+    list_display = ("resume", "model_version", "created_at")
+
+
+@admin.register(MatchScore)
+class MatchScoreAdmin(admin.ModelAdmin):
+    list_display = (
+        "application",
+        "overall_score",
+        "semantic_score",
+        "skill_overlap_score",
+        "created_at",
+    )
+    list_filter = ("overall_score",)
+    search_fields = (
+        "application__candidate__email",
+        "application__job__title",
+    )

@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
@@ -422,3 +423,182 @@ class ApplicationsAPITestCase(TestCase):
 
         app.refresh_from_db()
         self.assertEqual(app.status, Application.Status.WITHDRAWN)
+
+
+class AIMatchingPipelineTestCase(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.candidate = User.objects.create_user(
+            email="ai_candidate@sm.com",
+            password="Password123!",
+            role=User.Role.CANDIDATE,
+        )
+        self.recruiter = User.objects.create_user(
+            email="ai_recruiter@sm.com",
+            password="Password123!",
+            role=User.Role.RECRUITER,
+        )
+        self.company = Company.objects.create(name="Vector AI Corp", is_verified=True)
+        self.job = Job.objects.create(
+            company=self.company,
+            recruiter=self.recruiter,
+            title="Senior Python Backend Developer",
+            description=(
+                "We are looking for a Python and Django expert with Celery, "
+                "Redis, and PostgreSQL experience."
+            ),
+        )
+        # Add required & optional skills
+        self.job.skills.create(skill_name="Python", is_required=True)
+        self.job.skills.create(skill_name="Django", is_required=True)
+        self.job.skills.create(skill_name="Docker", is_required=False)
+
+        resume_content = (
+            b"Experienced Software Engineer skilled in Python, Django, REST "
+            b"APIs, and Docker. Built scalable microservices and backend architectures."
+        )
+        self.resume = Resume.objects.create(
+            candidate=self.candidate,
+            file=SimpleUploadedFile(
+                "candidate_resume.txt",
+                resume_content,
+                content_type="text/plain",
+            ),
+            original_filename="candidate_resume.txt",
+            file_size=len(resume_content),
+            mime_type="text/plain",
+        )
+
+    def test_direct_pipeline_execution(self):
+        from applications.models import (
+            MatchScore,
+            ResumeEmbedding,
+            ResumeParsedData,
+        )
+        from applications.tasks import process_resume_and_match
+        from jobs.models import JobEmbedding
+
+        app = Application.objects.create(
+            job=self.job,
+            candidate=self.candidate,
+            resume=self.resume,
+            status=Application.Status.APPLIED,
+        )
+
+        result_message = process_resume_and_match(str(app.id))
+        self.assertIn("Processed application", result_message)
+
+        # 1. ResumeParsedData verified
+        parsed_data = ResumeParsedData.objects.get(resume=self.resume)
+        self.assertIn("Python", parsed_data.skills)
+        self.assertIn("Django", parsed_data.skills)
+        self.assertIn("Docker", parsed_data.skills)
+        self.assertIn("Experienced Software Engineer", parsed_data.extracted_text)
+
+        # 2. ResumeEmbedding verified (384 dimensions)
+        resume_emb = ResumeEmbedding.objects.get(resume=self.resume)
+        self.assertEqual(len(resume_emb.embedding), 384)
+        self.assertEqual(resume_emb.model_version, "all-MiniLM-L6-v2")
+
+        # 3. JobEmbedding verified (384 dimensions)
+        job_emb = JobEmbedding.objects.get(job=self.job)
+        self.assertEqual(len(job_emb.embedding), 384)
+
+        # 4. MatchScore verified
+        match_score = MatchScore.objects.get(application=app)
+        self.assertGreaterEqual(match_score.overall_score, 0.0)
+        self.assertLessEqual(match_score.overall_score, 100.0)
+        self.assertGreaterEqual(match_score.semantic_score, 0.0)
+        self.assertLessEqual(match_score.semantic_score, 100.0)
+        self.assertEqual(match_score.skill_overlap_score, 100.0)
+        self.assertIn("Python", match_score.matched_skills)
+        self.assertIn("Django", match_score.matched_skills)
+        self.assertIn("Docker", match_score.matched_skills)
+        self.assertEqual(len(match_score.missing_skills), 0)
+
+        # Expected formula verification
+        expected_overall = round(
+            0.65 * float(match_score.semantic_score)
+            + 0.35 * float(match_score.skill_overlap_score),
+            2,
+        )
+        self.assertAlmostEqual(
+            float(match_score.overall_score), expected_overall, places=1
+        )
+
+    def test_api_create_application_triggers_matching_and_returns_match_score(self):
+        refresh = RefreshToken.for_user(self.candidate)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        # Post application creation
+        response = self.client.post(
+            "/api/applications/",
+            {
+                "job_id": str(self.job.id),
+                "resume_id": str(self.resume.id),
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        app_id = response.data["id"]
+
+        # In eager mode, matching runs synchronously upon delay() call
+        app = Application.objects.get(id=app_id)
+        self.assertTrue(hasattr(app, "match_score"))
+
+        # Recruiter retrieves application detail and sees match_score explainability
+        recruiter_refresh = RefreshToken.for_user(self.recruiter)
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {recruiter_refresh.access_token}"
+        )
+
+        get_res = self.client.get(f"/api/applications/{app_id}/")
+        self.assertEqual(get_res.status_code, status.HTTP_200_OK)
+        self.assertIn("match_score", get_res.data)
+        match_data = get_res.data["match_score"]
+        self.assertIsNotNone(match_data)
+        self.assertIn("overall_score", match_data)
+        self.assertIn("semantic_score", match_data)
+        self.assertIn("skill_overlap_score", match_data)
+        self.assertIn("matched_skills", match_data)
+        self.assertIn("missing_skills", match_data)
+        self.assertIn("Python", match_data["matched_skills"])
+
+    @patch("applications.tasks.process_resume_and_match.delay")
+    def test_mock_celery_task_triggered_on_application_creation(self, mock_task):
+        refresh = RefreshToken.for_user(self.candidate)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        response = self.client.post(
+            "/api/applications/",
+            {
+                "job_id": str(self.job.id),
+                "resume_id": str(self.resume.id),
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        mock_task.assert_called_once_with(response.data["id"])
+
+    @patch("applications.tasks.generate_dense_embedding")
+    def test_mock_embedding_generation(self, mock_embedding):
+        from applications.models import MatchScore
+        from applications.tasks import process_resume_and_match
+
+        # Provide a synthetic 384-dimensional vector
+        mock_embedding.return_value = [0.05] * 384
+
+        app = Application.objects.create(
+            job=self.job,
+            candidate=self.candidate,
+            resume=self.resume,
+            status=Application.Status.APPLIED,
+        )
+
+        result_message = process_resume_and_match(str(app.id))
+        self.assertIn("Processed application", result_message)
+        self.assertTrue(mock_embedding.called)
+
+        match_score = MatchScore.objects.get(application=app)
+        self.assertIsNotNone(match_score)
+        self.assertGreater(float(match_score.overall_score), 0.0)
