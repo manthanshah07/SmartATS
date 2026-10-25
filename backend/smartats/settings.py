@@ -23,7 +23,13 @@ SECRET_KEY = os.getenv(
 
 DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
 
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("ALLOWED_HOSTS", "*").split(",")
+    if host.strip()
+]
+if "*" not in ALLOWED_HOSTS and ".onrender.com" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.extend([".onrender.com", "localhost", "127.0.0.1"])
 
 
 # Application definition
@@ -51,6 +57,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -133,6 +140,7 @@ USE_TZ = True
 # Static files
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+os.makedirs(STATIC_ROOT, exist_ok=True)
 
 # Media files
 MEDIA_URL = "/media/"
@@ -187,7 +195,22 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
+    "https://smartats.vercel.app",
+    "https://smart-ats.vercel.app",
 ]
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https:\/\/.*\.vercel\.app$",
+    r"^https:\/\/.*\.onrender\.com$",
+]
+extra_cors = os.getenv("CORS_ALLOWED_ORIGINS")
+if extra_cors:
+    if extra_cors.strip() == "*":
+        CORS_ALLOW_ALL_ORIGINS = True
+    else:
+        for origin in extra_cors.split(","):
+            origin = origin.strip()
+            if origin and origin not in CORS_ALLOWED_ORIGINS:
+                CORS_ALLOWED_ORIGINS.append(origin)
 
 # Celery & Redis Broker Configuration
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")

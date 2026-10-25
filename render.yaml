@@ -1,0 +1,41 @@
+services:
+  - type: redis
+    name: smartats-redis
+    ipAllowList: []
+    plan: free
+
+  - type: web
+    name: smartats-api
+    runtime: python
+    buildCommand: cd backend && pip install -r requirements.txt && python manage.py collectstatic --noinput
+    startCommand: cd backend && pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate && gunicorn smartats.wsgi:application
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: smartats-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_HOSTS
+        value: "*"
+      - key: CORS_ALLOW_ALL
+        value: "True"
+
+  - type: worker
+    name: smartats-celery
+    runtime: python
+    buildCommand: cd backend && pip install -r requirements.txt
+    startCommand: cd backend && celery -A smartats worker --loglevel=info
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: smartats-redis
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
