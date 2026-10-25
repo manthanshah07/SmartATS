@@ -9,7 +9,10 @@ from jobs.models import Company, Job, JobSkill
 
 
 class Command(BaseCommand):
-    help = "Seeds the database with realistic companies, recruiters, candidates, jobs, and applications with AI match scores."
+    help = (
+        "Seeds the database with realistic companies, recruiters, candidates, "
+        "jobs, and applications with AI match scores."
+    )
 
     @transaction.atomic
     def handle(self, *args, **options):
@@ -23,32 +26,58 @@ class Command(BaseCommand):
                 "name": "TechNova Solutions",
                 "industry": "Enterprise Cloud & AI",
                 "website": "https://technova.io",
-                "logo_url": "https://images.unsplash.com/photo-1549923746-c502d488b3ea?w=128&h=128&fit=crop",
-                "description": "TechNova Solutions builds next-generation distributed systems and enterprise AI integration platforms for Fortune 500 organizations.",
+                "logo_url": (
+                    "https://images.unsplash.com/photo-1549923746-c502d488b3ea"
+                    "?w=128&h=128&fit=crop"
+                ),
+                "description": (
+                    "TechNova Solutions builds next-generation distributed systems "
+                    "and enterprise AI integration platforms for Fortune 500 "
+                    "organizations."
+                ),
                 "is_verified": True,
             },
             {
                 "name": "CloudScale Labs",
                 "industry": "DevOps & Cloud Infrastructure",
                 "website": "https://cloudscale.dev",
-                "logo_url": "https://images.unsplash.com/photo-1551434678-e076c223a692?w=128&h=128&fit=crop",
-                "description": "CloudScale Labs provides high-availability Kubernetes orchestration, observability pipelines, and cloud migration frameworks.",
+                "logo_url": (
+                    "https://images.unsplash.com/photo-1551434678-e076c223a692"
+                    "?w=128&h=128&fit=crop"
+                ),
+                "description": (
+                    "CloudScale Labs provides high-availability Kubernetes "
+                    "orchestration, observability pipelines, and cloud migration "
+                    "frameworks."
+                ),
                 "is_verified": True,
             },
             {
                 "name": "Apex Health",
                 "industry": "HealthTech & Biotechnology",
                 "website": "https://apexhealth.ai",
-                "logo_url": "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=128&h=128&fit=crop",
-                "description": "Apex Health develops HIPAA-compliant AI diagnostics and telemetry synchronization tools for modern hospital networks.",
+                "logo_url": (
+                    "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d"
+                    "?w=128&h=128&fit=crop"
+                ),
+                "description": (
+                    "Apex Health develops HIPAA-compliant AI diagnostics and "
+                    "telemetry synchronization tools for modern hospital networks."
+                ),
                 "is_verified": True,
             },
             {
                 "name": "Starlight Cyber",
                 "industry": "Cybersecurity & Zero Trust",
                 "website": "https://starlightcyber.com",
-                "logo_url": "https://images.unsplash.com/photo-1563986768609-322da13575f3?w=128&h=128&fit=crop",
-                "description": "Autonomous identity verification and threat detection platform for modern cloud-native enterprises.",
+                "logo_url": (
+                    "https://images.unsplash.com/photo-1563986768609-322da13575f3"
+                    "?w=128&h=128&fit=crop"
+                ),
+                "description": (
+                    "Autonomous identity verification and threat detection platform "
+                    "for modern cloud-native enterprises."
+                ),
                 "is_verified": True,
             },
         ]
@@ -111,7 +140,9 @@ class Command(BaseCommand):
                 "department": "Engineering Recruitment",
             },
         )
-        self.stdout.write(f"  [Configured] Recruiter: {recruiter_user.email} -> {technova.name}")
+        self.stdout.write(
+            f"  [Configured] Recruiter: {recruiter_user.email} -> {technova.name}"
+        )
 
         # C. Primary Candidate Account
         primary_candidate, created = User.objects.get_or_create(
@@ -134,13 +165,18 @@ class Command(BaseCommand):
                 "first_name": "Alex",
                 "last_name": "Chen",
                 "headline": "Senior Full-Stack Engineer (Python / React / TypeScript)",
-                "bio": "Senior software engineer with 6+ years building resilient microservices and reactive React interfaces.",
+                "bio": (
+                    "Senior software engineer with 6+ years building resilient "
+                    "microservices and reactive React interfaces."
+                ),
                 "location": "San Francisco, CA",
                 "linkedin_url": "https://linkedin.com/in/alexchen-dev",
                 "github_url": "https://github.com/alexchen-dev",
             },
         )
-        self.stdout.write(f"  [Configured] Primary Candidate: {primary_candidate.email}")
+        self.stdout.write(
+            f"  [Configured] Primary Candidate: {primary_candidate.email}"
+        )
 
         # D. Additional Candidates for rich pipeline data
         additional_candidates_data = [
@@ -206,9 +242,10 @@ class Command(BaseCommand):
                 "salary_min": decimal.Decimal("140000.00"),
                 "salary_max": decimal.Decimal("185000.00"),
                 "description": (
-                    "We are seeking a Senior Full-Stack Engineer to architect distributed web applications "
-                    "and high-throughput APIs. You will collaborate with product designers and infrastructure "
-                    "engineers to build resilient, accessible, and performant user experiences."
+                    "We are seeking a Senior Full-Stack Engineer to architect "
+                    "distributed web applications and high-throughput APIs. You will "
+                    "collaborate with product designers and infrastructure engineers "
+                    "to build resilient, accessible, and performant user experiences."
                 ),
                 "skills": [
                     ("Python", True),
@@ -229,8 +266,9 @@ class Command(BaseCommand):
                 "salary_min": decimal.Decimal("160000.00"),
                 "salary_max": decimal.Decimal("210000.00"),
                 "description": (
-                    "Join our healthcare AI team to build transformer-based clinical document processing "
-                    "and semantic search systems. You will train, evaluate, and deploy deep learning models "
+                    "Join our healthcare AI team to build transformer-based "
+                    "clinical document processing and semantic search systems. "
+                    "You will train, evaluate, and deploy deep learning models "
                     "on large multi-modal biomedical datasets."
                 ),
                 "skills": [
@@ -252,8 +290,9 @@ class Command(BaseCommand):
                 "salary_min": decimal.Decimal("155000.00"),
                 "salary_max": decimal.Decimal("195000.00"),
                 "description": (
-                    "Lead our core platform data engineering team responsible for petabyte-scale event pipelines, "
-                    "Kafka streaming architectures, and ClickHouse OLAP stores."
+                    "Lead our core platform data engineering team responsible for "
+                    "petabyte-scale event pipelines, Kafka streaming architectures, "
+                    "and ClickHouse OLAP stores."
                 ),
                 "skills": [
                     ("Python", True),
@@ -273,8 +312,10 @@ class Command(BaseCommand):
                 "salary_min": decimal.Decimal("145000.00"),
                 "salary_max": decimal.Decimal("190000.00"),
                 "description": (
-                    "Design and lead the evolution of our enterprise design systems and component libraries "
-                    "using React 18, Vite, and Tailwind CSS. Elevate user experience, frontend testing, and client-side performance."
+                    "Design and lead the evolution of our enterprise design systems "
+                    "and component libraries using React 18, Vite, and Tailwind CSS. "
+                    "Elevate user experience, frontend testing, and client-side "
+                    "performance."
                 ),
                 "skills": [
                     ("React", True),
@@ -321,33 +362,41 @@ class Command(BaseCommand):
         # 4. SEED CANDIDATE APPLICATIONS & AI MATCH SCORES
         # -------------------------------------------------------------
         applications_data = [
-            # App 1: Alex Chen -> Senior Full-Stack Engineer (High Match 92%, Stage: SHORTLISTED)
+            # App 1: Alex Chen -> Senior Full-Stack Engineer (92% match)
             {
                 "candidate": candidate_users["candidate@test.com"],
                 "job": seeded_jobs["Senior Full-Stack Engineer"],
                 "resume_filename": "Alex_Chen_FullStack_Resume.pdf",
                 "status": Application.Status.SHORTLISTED,
                 "cover_letter": (
-                    "I have spent the last 6 years building high-concurrency Django services and React interfaces. "
-                    "TechNova's engineering culture and AI vision align directly with my technical capabilities."
+                    "I have spent the last 6 years building high-concurrency Django "
+                    "services and React interfaces. TechNova's engineering culture "
+                    "and AI vision align directly with my technical capabilities."
                 ),
                 "match_score": {
                     "overall_score": decimal.Decimal("92.00"),
                     "semantic_score": decimal.Decimal("94.50"),
                     "skill_overlap_score": decimal.Decimal("90.00"),
-                    "matched_skills": ["Python", "Django", "React", "TypeScript", "PostgreSQL"],
+                    "matched_skills": [
+                        "Python",
+                        "Django",
+                        "React",
+                        "TypeScript",
+                        "PostgreSQL",
+                    ],
                     "missing_skills": ["Redis"],
                 },
             },
-            # App 2: Marcus Vance -> Senior Full-Stack Engineer (Solid Match 78%, Stage: INTERVIEW_SCHEDULED)
+            # App 2: Marcus Vance -> Senior Full-Stack Engineer (78% match)
             {
                 "candidate": candidate_users["marcus.vance@outlook.com"],
                 "job": seeded_jobs["Senior Full-Stack Engineer"],
                 "resume_filename": "Marcus_Vance_Backend_Architect.pdf",
                 "status": Application.Status.INTERVIEW_SCHEDULED,
                 "cover_letter": (
-                    "Extensive experience in distributed Python services and enterprise database architectures. "
-                    "Looking forward to discussing how I can strengthen TechNova's platform layer."
+                    "Extensive experience in distributed Python services and "
+                    "enterprise database architectures. Looking forward to "
+                    "discussing how I can strengthen TechNova's platform layer."
                 ),
                 "match_score": {
                     "overall_score": decimal.Decimal("78.00"),
@@ -357,50 +406,65 @@ class Command(BaseCommand):
                     "missing_skills": ["TypeScript", "React"],
                 },
             },
-            # App 3: Sarah Jenkins -> AI/ML Engineer (Exceptional Match 95%, Stage: OFFERED)
+            # App 3: Sarah Jenkins -> AI/ML Engineer (95% match)
             {
                 "candidate": candidate_users["sarah.jenkins@gmail.com"],
                 "job": seeded_jobs["AI/ML Engineer"],
                 "resume_filename": "Sarah_Jenkins_ML_Engineer.pdf",
                 "status": Application.Status.OFFERED,
                 "cover_letter": (
-                    "Published author on transformer-based biomedical entity extraction. Excited to help "
-                    "Apex Health scale its automated diagnostic pipelines."
+                    "Published author on transformer-based biomedical entity "
+                    "extraction. Excited to help Apex Health scale its automated "
+                    "diagnostic pipelines."
                 ),
                 "match_score": {
                     "overall_score": decimal.Decimal("95.00"),
                     "semantic_score": decimal.Decimal("97.00"),
                     "skill_overlap_score": decimal.Decimal("93.00"),
-                    "matched_skills": ["Python", "PyTorch", "NLP", "FastAPI", "Transformers", "pgvector"],
+                    "matched_skills": [
+                        "Python",
+                        "PyTorch",
+                        "NLP",
+                        "FastAPI",
+                        "Transformers",
+                        "pgvector",
+                    ],
                     "missing_skills": [],
                 },
             },
-            # App 4: Elena Rostova -> Senior Frontend Architect (Solid Match 88%, Stage: SCREENING)
+            # App 4: Elena Rostova -> Senior Frontend Architect (88% match)
             {
                 "candidate": candidate_users["elena.rostova@techmail.io"],
                 "job": seeded_jobs["Senior Frontend Architect"],
                 "resume_filename": "Elena_Rostova_Design_Systems.pdf",
                 "status": Application.Status.SCREENING,
                 "cover_letter": (
-                    "Specialized in design systems and web application performance at scale. "
-                    "Excited to lead TechNova's next generation UI architecture."
+                    "Specialized in design systems and web application performance "
+                    "at scale. Excited to lead TechNova's next generation UI "
+                    "architecture."
                 ),
                 "match_score": {
                     "overall_score": decimal.Decimal("88.00"),
                     "semantic_score": decimal.Decimal("91.00"),
                     "skill_overlap_score": decimal.Decimal("85.00"),
-                    "matched_skills": ["React", "TypeScript", "Tailwind CSS", "Web Performance"],
+                    "matched_skills": [
+                        "React",
+                        "TypeScript",
+                        "Tailwind CSS",
+                        "Web Performance",
+                    ],
                     "missing_skills": ["Jest"],
                 },
             },
-            # App 5: Alex Chen -> AI/ML Engineer (Lower Match 45%, Stage: APPLIED)
+            # App 5: Alex Chen -> AI/ML Engineer (45% match)
             {
                 "candidate": candidate_users["candidate@test.com"],
                 "job": seeded_jobs["AI/ML Engineer"],
                 "resume_filename": "Alex_Chen_General.pdf",
                 "status": Application.Status.APPLIED,
                 "cover_letter": (
-                    "Experienced full-stack developer eager to transition into applied ML production systems."
+                    "Experienced full-stack developer eager to transition into "
+                    "applied ML production systems."
                 ),
                 "match_score": {
                     "overall_score": decimal.Decimal("45.00"),
@@ -417,7 +481,10 @@ class Command(BaseCommand):
             job = app_data["job"]
 
             # Mock resume document
-            mock_content = f"%PDF-1.4 Mock resume file for {candidate.email} targeting {job.title}".encode("utf-8")
+            mock_text = (
+                f"%PDF-1.4 Mock resume file for {candidate.email} targeting {job.title}"
+            )
+            mock_content = mock_text.encode("utf-8")
             resume, _ = Resume.objects.get_or_create(
                 candidate=candidate,
                 original_filename=app_data["resume_filename"],
@@ -452,7 +519,9 @@ class Command(BaseCommand):
                 f"[{app.status}] ({score_data['overall_score']}% match)"
             )
 
-        self.stdout.write(self.style.SUCCESS("\nSmartATS database seeded successfully!"))
+        self.stdout.write(
+            self.style.SUCCESS("\nSmartATS database seeded successfully!")
+        )
         self.stdout.write(self.style.SUCCESS("Demo credentials summary:"))
         self.stdout.write("  - Admin:     admin@smartats.com / Password123!")
         self.stdout.write("  - Recruiter: recruiter@technova.com / Password123!")

@@ -75,7 +75,7 @@ class JobSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         # Enforce that only verified companies can have jobs posted
-        company = attrs.get("company")
+        company = attrs.get("company", getattr(self.instance, "company", None))
         if company and not company.is_verified:
             raise serializers.ValidationError(
                 {
@@ -85,6 +85,19 @@ class JobSerializer(serializers.ModelSerializer):
                     )
                 }
             )
+
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user and user.is_authenticated and not user.is_admin_role:
+            if not hasattr(user, "recruiter_profile"):
+                raise serializers.ValidationError(
+                    {"company": "Recruiter profile is required to post jobs."}
+                )
+            user_company = user.recruiter_profile.company
+            if user_company is not None and company and user_company != company:
+                raise serializers.ValidationError(
+                    {"company": "You can only post jobs for your assigned company."}
+                )
 
         # Enforce that salary_min <= salary_max if both provided
         s_min = attrs.get("salary_min")

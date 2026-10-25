@@ -33,7 +33,9 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
         try:
             if hasattr(self.user, "recruiter_profile") and self.user.recruiter_profile:
                 rec = self.user.recruiter_profile
-                user_info["company_id"] = str(rec.company_id) if rec.company_id else None
+                user_info["company_id"] = (
+                    str(rec.company_id) if rec.company_id else None
+                )
                 company_name = rec.company_name
                 if not company_name and rec.company:
                     company_name = rec.company.name
@@ -94,7 +96,7 @@ class UserSerializer(serializers.ModelSerializer):
             "candidate_profile",
             "recruiter_profile",
         ]
-        read_only_fields = ["id", "is_active", "date_joined"]
+        read_only_fields = ["id", "is_active", "date_joined", "role"]
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -102,7 +104,8 @@ class RegisterSerializer(serializers.ModelSerializer):
         write_only=True, required=True, validators=[validate_password]
     )
     role = serializers.ChoiceField(
-        choices=User.Role.choices, default=User.Role.CANDIDATE
+        choices=[User.Role.CANDIDATE, User.Role.RECRUITER],
+        default=User.Role.CANDIDATE,
     )
     first_name = serializers.CharField(
         write_only=True, required=False, allow_blank=True, default=""
@@ -128,6 +131,13 @@ class RegisterSerializer(serializers.ModelSerializer):
             "company_name",
             "title",
         ]
+
+    def validate_role(self, value):
+        if value not in [User.Role.CANDIDATE, User.Role.RECRUITER]:
+            raise serializers.ValidationError(
+                "Registration is only permitted for Candidate and Recruiter roles."
+            )
+        return value
 
     def validate_email(self, value):
         normalized = value.lower().strip()

@@ -116,6 +116,28 @@ class InterviewTestCase(TestCase):
         self.assertIn("Senior Full-Stack Engineer", notif.message)
         self.assertFalse(notif.is_read)
 
+    def test_recruiter_cannot_schedule_interview_for_other_company(self):
+        other_company = Company.objects.create(name="Competitor Inc", is_verified=True)
+        other_recruiter = User.objects.create_user(
+            email="other_recruiter@smartats.com",
+            password="Password123!",
+            role=User.Role.RECRUITER,
+        )
+        other_recruiter.recruiter_profile.company = other_company
+        other_recruiter.recruiter_profile.save()
+
+        self.authenticate(other_recruiter)
+        payload = {
+            "application_id": str(self.app1.id),
+            "round_name": "Unauthorized Round",
+            "scheduled_start": self.start_time.isoformat(),
+            "scheduled_end": self.end_time.isoformat(),
+            "meeting_url": "https://meet.google.com/xyz-1234-uvw",
+        }
+        response = self.client.post("/api/interviews/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("application_id", response.data)
+
     def test_candidate_cannot_schedule_interview(self):
         self.authenticate(self.candidate)
         payload = {

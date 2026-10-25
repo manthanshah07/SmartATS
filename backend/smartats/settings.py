@@ -6,7 +6,9 @@ import os
 import sys
 from datetime import timedelta
 from pathlib import Path
+from corsheaders.defaults import default_headers, default_methods
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -16,17 +18,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR.parent / ".env")
 load_dotenv()
 
-SECRET_KEY = os.getenv(
-    "SECRET_KEY",
-    "django-insecure-=1c7ppi+1ox69$kl*gibriw)6=oji7j$#yailg#jp%1meio61s",
-)
-
 DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
 
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured(
+            "SECRET_KEY environment variable is required in production."
+        )
+    SECRET_KEY = "django-insecure-=1c7ppi+1ox69$kl*gibriw)6=oji7j$#yailg#jp%1meio61s"
+
 ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.getenv("ALLOWED_HOSTS", "*").split(",")
-    if host.strip()
+    host.strip() for host in os.getenv("ALLOWED_HOSTS", "*").split(",") if host.strip()
 ]
 if "*" not in ALLOWED_HOSTS and ".onrender.com" not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.extend([".onrender.com", "localhost", "127.0.0.1"])
@@ -188,8 +191,6 @@ SIMPLE_JWT = {
 
 
 # CORS configuration
-from corsheaders.defaults import default_headers, default_methods
-
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGIN_REGEXES = [

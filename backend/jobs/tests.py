@@ -250,6 +250,29 @@ class JobsAPITestCase(TestCase):
         self.assertEqual(len(res.data["skills"]), 2)
         self.assertEqual(res.data["recruiter_email"], self.recruiter_1.email)
 
+    def test_recruiter_cannot_post_for_different_company(self):
+        # Assign recruiter_1 to verified_company
+        self.recruiter_1.recruiter_profile.company = self.verified_company
+        self.recruiter_1.recruiter_profile.save()
+
+        other_company = Company.objects.create(
+            name="Other Corp",
+            is_verified=True,
+        )
+
+        self.authenticate(self.recruiter_1)
+        res = self.client.post(
+            "/api/jobs/",
+            {
+                "title": "Unauthorized Cross-Tenant Job",
+                "company_id": str(other_company.id),
+                "description": "Should fail tenant isolation.",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("company", res.data)
+
     def test_job_owner_restrictions(self):
         # Recruiter 2 tries to update Recruiter 1's job
         self.authenticate(self.recruiter_2)

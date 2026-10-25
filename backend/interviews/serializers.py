@@ -68,6 +68,40 @@ class InterviewSerializer(serializers.ModelSerializer):
             return None
 
     def validate(self, attrs):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        application = attrs.get(
+            "application", getattr(self.instance, "application", None)
+        )
+        if application and user and user.is_authenticated and not user.is_admin_role:
+            recruiter_profile = getattr(user, "recruiter_profile", None)
+            if not recruiter_profile:
+                raise serializers.ValidationError(
+                    {"application_id": _("Recruiter profile is required.")}
+                )
+            recruiter_company = recruiter_profile.company
+            if (
+                recruiter_company is not None
+                and application.job.company != recruiter_company
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "application_id": _(
+                            "You are only authorized to schedule interviews for your "
+                            "assigned company's job applications."
+                        )
+                    }
+                )
+            if recruiter_company is None and application.job.recruiter != user:
+                raise serializers.ValidationError(
+                    {
+                        "application_id": _(
+                            "You are only authorized to schedule interviews for your "
+                            "assigned company's job applications."
+                        )
+                    }
+                )
+
         start = attrs.get(
             "scheduled_start",
             getattr(self.instance, "scheduled_start", None),

@@ -134,7 +134,8 @@ def generate_lightweight_embedding(text, dimensions=384):
     """
     Deterministic, low-memory 384-dimensional feature-hashing embedding vector.
     Extracts unigrams and bigrams, applies sign-hashing and L2 normalization.
-    Consumes negligible memory (< 100KB) and preserves keyword/semantic overlap for matching.
+    Consumes negligible memory (< 100KB) and preserves keyword/semantic overlap
+    for matching.
     """
     clean_text = text.strip() or "empty document"
     words = [re.sub(r"[^\w]", "", w.lower()) for w in clean_text.split()]
@@ -176,9 +177,13 @@ def generate_dense_embedding(text, dimensions=384):
     """
     clean_text = text.strip() or "empty document"
 
-    # Constrained environments (e.g. Render 512MB free tier) default to lightweight embeddings
-    # to guarantee peak RSS stays well below container limits.
-    use_heavy_model = os.getenv("ENABLE_HEAVY_EMBEDDINGS", "False").lower() in ("true", "1", "yes")
+    # Constrained environments (e.g. Render 512MB free tier) default
+    # to lightweight embeddings to guarantee peak RSS stays well below limits.
+    use_heavy_model = os.getenv("ENABLE_HEAVY_EMBEDDINGS", "False").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
 
     if use_heavy_model:
         try:

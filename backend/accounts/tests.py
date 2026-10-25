@@ -322,3 +322,38 @@ class AuthAPITestCase(TestCase):
             self.candidate.candidate_profile.headline, "Full-stack Engineer"
         )
         self.assertEqual(self.candidate.candidate_profile.location, "San Francisco, CA")
+
+    def test_cannot_register_as_admin(self):
+        response = self.client.post(
+            "/api/auth/register/",
+            {
+                "email": "hacker@test.com",
+                "password": "SecurePassword987!",
+                "role": "ADMIN",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(User.objects.filter(email="hacker@test.com").exists())
+
+    def test_cannot_escalate_role_via_profile_update(self):
+        login_res = self.client.post(
+            "/api/auth/login/",
+            {
+                "email": "candidate@test.com",
+                "password": "CandidatePass123!",
+            },
+            format="json",
+        )
+        access_token = login_res.data["access"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
+
+        update_res = self.client.patch(
+            "/api/auth/me/",
+            {"role": "ADMIN"},
+            format="json",
+        )
+        self.assertEqual(update_res.status_code, status.HTTP_200_OK)
+        self.candidate.refresh_from_db()
+        self.assertEqual(self.candidate.role, User.Role.CANDIDATE)
+        self.assertNotEqual(self.candidate.role, User.Role.ADMIN)
