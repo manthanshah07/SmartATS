@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "corsheaders",
     "django_filters",
     # Local Apps
+    "core.apps.CoreConfig",
     "accounts.apps.AccountsConfig",
     "jobs.apps.JobsConfig",
     "applications.apps.ApplicationsConfig",
@@ -95,6 +96,8 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     if "test" in sys.argv:
         DATABASE_URL = "sqlite:///:memory:"
+    elif (BASE_DIR / "db.sqlite3").exists():
+        DATABASE_URL = f"sqlite:///{BASE_DIR / 'db.sqlite3'}"
     else:
         DATABASE_URL = "postgres://postgres:postgres@localhost:5432/smartats_db"
 

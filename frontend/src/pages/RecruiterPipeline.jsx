@@ -1,4 +1,5 @@
-import { ChangeEvent, FormEvent, KeyboardEvent, useMemo, useState } from "react"
+import React, { useEffect, useMemo, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import {
   AlertCircle,
   ArrowRight,
@@ -17,6 +18,7 @@ import {
   Filter,
   Kanban,
   Loader2,
+  LogOut,
   MapPin,
   Menu,
   Plus,
@@ -46,23 +48,18 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "./components/ui/primitives"
-import { useAnalytics } from "./hooks/useAnalytics"
+} from "../components/ui/primitives"
+import { useAnalytics } from "../hooks/useAnalytics"
 import {
-  Application,
-  ApplicationStatus,
   useApplications,
   useUpdateApplicationStatus,
-} from "./hooks/useApplications"
+} from "../hooks/useApplications"
 import {
-  formatJobType,
-  formatSalary,
-  Job,
-  useApplyToJob,
   useCompanies,
   useCreateJob,
   useJobs,
-} from "./hooks/useJobs"
+} from "../hooks/useJobs"
+import { getCurrentUser, logoutUser } from "../lib/auth"
 
 const AVATAR_COLORS = [
   "bg-indigo-600",
@@ -74,7 +71,7 @@ const AVATAR_COLORS = [
   "bg-rose-600",
 ]
 
-function getAvatarColor(identifier?: string): string {
+function getAvatarColor(identifier) {
   if (!identifier) return "bg-indigo-600"
   let hash = 0
   for (let i = 0; i < identifier.length; i++) {
@@ -84,8 +81,8 @@ function getAvatarColor(identifier?: string): string {
   return AVATAR_COLORS[index]
 }
 
-function getInitials(text?: string): string {
-  if (!text) return "JD"
+function getInitials(text) {
+  if (!text) return "RC"
   const clean = text.split("@")[0].replace(/[^a-zA-Z]/g, " ").trim()
   const parts = clean.split(/\s+/)
   if (parts.length >= 2) {
@@ -94,7 +91,7 @@ function getInitials(text?: string): string {
   return text.slice(0, 2).toUpperCase()
 }
 
-function formatRelativeTime(dateString?: string): string {
+function formatRelativeTime(dateString) {
   if (!dateString) return "Recently"
   const now = new Date()
   const date = new Date(dateString)
@@ -111,7 +108,7 @@ function formatRelativeTime(dateString?: string): string {
   return `${diffInWeeks}w ago`
 }
 
-function scoreTone(score: number | string | undefined | null): string {
+function scoreTone(score) {
   if (score === undefined || score === null) {
     return "border-slate-200 bg-slate-50 text-slate-500"
   }
@@ -121,11 +118,7 @@ function scoreTone(score: number | string | undefined | null): string {
   return "border-amber-200 bg-amber-50 text-amber-700"
 }
 
-const KANBAN_COLUMNS: {
-  id: ApplicationStatus
-  title: string
-  tone: string
-}[] = [
+const KANBAN_COLUMNS = [
   { id: "APPLIED", title: "Applied", tone: "bg-indigo-500" },
   { id: "SCREENING", title: "Screening", tone: "bg-violet-500" },
   { id: "SHORTLISTED", title: "Shortlisted", tone: "bg-sky-500" },
@@ -133,7 +126,7 @@ const KANBAN_COLUMNS: {
   { id: "OFFERED", title: "Offered", tone: "bg-emerald-500" },
 ]
 
-const NEXT_STATUS: Record<ApplicationStatus, ApplicationStatus | null> = {
+const NEXT_STATUS = {
   APPLIED: "SCREENING",
   SCREENING: "SHORTLISTED",
   SHORTLISTED: "INTERVIEW_SCHEDULED",
@@ -143,7 +136,7 @@ const NEXT_STATUS: Record<ApplicationStatus, ApplicationStatus | null> = {
   WITHDRAWN: null,
 }
 
-const NEXT_STATUS_LABEL: Record<ApplicationStatus, string | null> = {
+const NEXT_STATUS_LABEL = {
   APPLIED: "Move to Screening",
   SCREENING: "Shortlist Candidate",
   SHORTLISTED: "Schedule Interview",
@@ -153,20 +146,19 @@ const NEXT_STATUS_LABEL: Record<ApplicationStatus, string | null> = {
   WITHDRAWN: null,
 }
 
-function App() {
-  const [activeTab, setActiveTab] = useState<"kanban" | "analytics" | "candidate">(
-    "kanban"
-  )
+export default function RecruiterPipeline() {
+  const navigate = useNavigate()
+  const currentUser = getCurrentUser()
+
+  const [activeTab, setActiveTab] = useState("kanban")
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
   // Global Toast
-  const [toastNotice, setToastNotice] = useState<string | null>(null)
+  const [toastNotice, setToastNotice] = useState(null)
 
   // Kanban State
-  const [selectedJobFilter, setSelectedJobFilter] = useState<string>("all")
-  const [selectedApplication, setSelectedApplication] = useState<Application | null>(
-    null
-  )
+  const [selectedJobFilter, setSelectedJobFilter] = useState("all")
+  const [selectedApplication, setSelectedApplication] = useState(null)
 
   // Job Posting Modal State
   const [postOpen, setPostOpen] = useState(false)
@@ -178,30 +170,15 @@ function App() {
   const [postSalaryMin, setPostSalaryMin] = useState("")
   const [postSalaryMax, setPostSalaryMax] = useState("")
   const [postDescription, setPostDescription] = useState("")
-  const [postSkills, setPostSkills] = useState<string[]>([
-    "Python",
-    "Django",
-    "React",
-  ])
+  const [postSkills, setPostSkills] = useState(["Python", "Django", "React"])
   const [skillInput, setSkillInput] = useState("")
-  const [postError, setPostError] = useState<string | null>(null)
-
-  // Candidate Discovery State
-  const [search, setSearch] = useState("")
-  const [location, setLocation] = useState("")
-  const [jobType, setJobType] = useState("all")
-  const [minSalary, setMinSalary] = useState<string>("all")
-  const [selectedJobToApply, setSelectedJobToApply] = useState<Job | null>(null)
-  const [resumeFile, setResumeFile] = useState<File | null>(null)
-  const [coverLetter, setCoverLetter] = useState("")
-  const [applyError, setApplyError] = useState<string | null>(null)
+  const [postError, setPostError] = useState(null)
 
   // API Hooks
   const {
     data: applications = [],
     isLoading: isLoadingApps,
     isError: isErrorApps,
-    error: errorApps,
     refetch: refetchApps,
   } = useApplications({
     job_id: selectedJobFilter !== "all" ? selectedJobFilter : undefined,
@@ -211,19 +188,38 @@ function App() {
 
   const {
     data: jobs = [],
-    isLoading: isLoadingJobs,
-    isError: isErrorJobs,
-    error: errorJobs,
     refetch: refetchJobs,
   } = useJobs({
-    search,
-    location,
-    job_type: jobType,
-    salary_min: minSalary !== "all" ? minSalary : undefined,
     is_active: true,
   })
 
   const { data: companies = [] } = useCompanies()
+
+  // Safeguard: Automatically select recruiter's company or first verified company
+  useEffect(() => {
+    if (companies.length > 0 && !postCompanyId) {
+      // 1. Match recruiter's assigned company ID
+      if (currentUser?.company_id && companies.some((c) => c.id === currentUser.company_id)) {
+        setPostCompanyId(currentUser.company_id)
+        return
+      }
+      // 2. Match recruiter's company name
+      if (currentUser?.company_name) {
+        const matched = companies.find(
+          (c) => c.name.toLowerCase() === currentUser.company_name.toLowerCase()
+        )
+        if (matched) {
+          setPostCompanyId(matched.id)
+          return
+        }
+      }
+      // 3. Fallback to first verified company or first available company
+      const defaultCompany = companies.find((c) => c.is_verified) || companies[0]
+      if (defaultCompany) {
+        setPostCompanyId(defaultCompany.id)
+      }
+    }
+  }, [companies, currentUser, postCompanyId])
   const {
     data: analytics,
     isLoading: isLoadingAnalytics,
@@ -231,11 +227,10 @@ function App() {
   } = useAnalytics()
 
   const createJobMutation = useCreateJob()
-  const applyMutation = useApplyToJob()
 
   // Partition applications by status for Kanban columns
   const applicationsByStatus = useMemo(() => {
-    const map: Record<ApplicationStatus, Application[]> = {
+    const map = {
       APPLIED: [],
       SCREENING: [],
       SHORTLISTED: [],
@@ -256,17 +251,14 @@ function App() {
   const averageMatchScore = useMemo(() => {
     const scores = applications
       .map((a) => (a.match_score?.overall_score ? Number(a.match_score.overall_score) : null))
-      .filter((s): s is number => s !== null)
+      .filter((s) => s !== null)
     if (!scores.length) return "78%"
     const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
     return `${avg}%`
   }, [applications])
 
   // Handle status update
-  const handleStatusTransition = async (
-    applicationId: string,
-    newStatus: ApplicationStatus
-  ) => {
+  const handleStatusTransition = async (applicationId, newStatus) => {
     try {
       await updateStatusMutation.mutateAsync({
         applicationId,
@@ -278,7 +270,7 @@ function App() {
           prev ? { ...prev, status: newStatus } : null
         )
       }
-    } catch (err: any) {
+    } catch (err) {
       const msg =
         err.response?.data?.detail ||
         err.response?.data?.status?.[0] ||
@@ -288,7 +280,7 @@ function App() {
   }
 
   // Handle Skill Chip Adding
-  const handleAddSkill = (e: KeyboardEvent<HTMLInputElement>) => {
+  const handleAddSkill = (e) => {
     if (e.key === "Enter") {
       e.preventDefault()
       const val = skillInput.trim()
@@ -302,14 +294,37 @@ function App() {
     }
   }
 
+  const handleOpenPostModal = () => {
+    if (companies.length > 0 && !postCompanyId) {
+      const defaultCompany =
+        (currentUser?.company_id && companies.find((c) => c.id === currentUser.company_id)) ||
+        (currentUser?.company_name &&
+          companies.find(
+            (c) => c.name.toLowerCase() === currentUser.company_name.toLowerCase()
+          )) ||
+        companies.find((c) => c.is_verified) ||
+        companies[0]
+      if (defaultCompany) {
+        setPostCompanyId(defaultCompany.id)
+      }
+    }
+    setPostOpen(true)
+  }
+
   // Handle Job Creation Submit
-  const handleCreateJobSubmit = async (e: FormEvent) => {
+  const handleCreateJobSubmit = async (e) => {
     e.preventDefault()
     setPostError(null)
 
-    // Fallback company if not selected
     const chosenCompanyId =
-      postCompanyId || companies.find((c) => c.is_verified)?.id || companies[0]?.id
+      postCompanyId ||
+      currentUser?.company_id ||
+      (currentUser?.company_name &&
+        companies.find(
+          (c) => c.name.toLowerCase() === currentUser.company_name.toLowerCase()
+        )?.id) ||
+      companies.find((c) => c.is_verified)?.id ||
+      companies[0]?.id
 
     if (!chosenCompanyId) {
       setPostError("Please select a valid company for this job requisition.")
@@ -334,13 +349,12 @@ function App() {
         `Job requisition "${postTitle}" published successfully! Candidates can now discover and apply.`
       )
       setPostOpen(false)
-      // Reset form
       setPostTitle("")
       setPostSalaryMin("")
       setPostSalaryMax("")
       setPostDescription("")
       setPostSkills(["Python", "Django", "React"])
-    } catch (err: any) {
+    } catch (err) {
       const detail =
         err.response?.data?.detail ||
         err.response?.data?.company?.[0] ||
@@ -350,57 +364,16 @@ function App() {
     }
   }
 
-  // Handle Candidate Apply
-  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setApplyError(null)
-    const file = e.target.files?.[0]
-    if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-        setApplyError("Resume file size must be less than 5MB.")
-        return
-      }
-      setResumeFile(file)
-    }
-  }
-
-  const handleApplySubmit = async (e: FormEvent) => {
-    e.preventDefault()
-    if (!selectedJobToApply) return
-    if (!resumeFile) {
-      setApplyError("Please select a PDF or DOCX resume to upload.")
-      return
-    }
-
-    setApplyError(null)
-    try {
-      await applyMutation.mutateAsync({
-        jobId: selectedJobToApply.id,
-        file: resumeFile,
-        coverLetter: coverLetter.trim() || undefined,
-      })
-
-      setToastNotice(
-        `Application for "${selectedJobToApply.title}" at ${selectedJobToApply.company.name} submitted successfully! AI matching is now analyzing your profile.`
-      )
-      setResumeFile(null)
-      setCoverLetter("")
-      setSelectedJobToApply(null)
-    } catch (err: any) {
-      const detail =
-        err.response?.data?.detail ||
-        err.response?.data?.non_field_errors?.[0] ||
-        err.response?.data?.file?.[0] ||
-        "Failed to submit application. Please verify your file and try again."
-      setApplyError(String(detail))
-    }
-  }
-
   // Calculate funnel max for progress width
   const funnelMax = useMemo(() => {
     if (!analytics?.status_funnel) return 1
     const vals = Object.values(analytics.status_funnel)
     return Math.max(1, ...vals)
   }, [analytics])
+
+  const userDisplayName =
+    currentUser?.first_name || currentUser?.email?.split("@")[0] || "Recruiter"
+  const userInitials = getInitials(currentUser?.email || "RC")
 
   return (
     <div className="min-h-screen bg-[#f7f8fc] text-slate-900">
@@ -457,15 +430,11 @@ function App() {
             </button>
 
             <button
-              onClick={() => setActiveTab("candidate")}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
-                activeTab === "candidate"
-                  ? "bg-indigo-50 text-indigo-700"
-                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-              }`}
+              onClick={() => navigate("/candidate/jobs")}
+              className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-500 hover:bg-slate-50 hover:text-slate-800 transition-colors"
             >
               <Search className="size-5 shrink-0" />
-              {sidebarOpen && <span className="flex-1 text-left">Find Jobs</span>}
+              {sidebarOpen && <span className="flex-1 text-left">Candidate Portal</span>}
             </button>
           </nav>
 
@@ -501,24 +470,18 @@ function App() {
 
           <div className="hidden lg:block">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
-              {activeTab === "kanban"
-                ? "Recruiter Workspace"
-                : activeTab === "analytics"
-                ? "Analytics Dashboard"
-                : "Candidate Portal"}
+              {activeTab === "kanban" ? "Recruiter Workspace" : "Analytics Dashboard"}
             </p>
             <h1 className="mt-0.5 text-lg font-bold">
               {activeTab === "kanban"
                 ? "Applicant Pipeline & AI Matching"
-                : activeTab === "analytics"
-                ? "Hiring Performance & Metrics"
-                : "Find Open Opportunities"}
+                : "Hiring Performance & Metrics"}
             </h1>
           </div>
 
           <div className="flex items-center gap-3">
             <Button
-              onClick={() => setPostOpen(true)}
+              onClick={handleOpenPostModal}
               size="sm"
               className="bg-indigo-600 hover:bg-indigo-700 text-xs gap-1.5"
             >
@@ -530,23 +493,45 @@ function App() {
               <span className="absolute right-2.5 top-2 size-1.5 rounded-full bg-rose-500 ring-2 ring-white" />
             </Button>
 
+            {/* Profile Dropdown with Authenticated User & Sign Out */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-2 rounded-full p-1.5 hover:bg-slate-50">
                   <div className="grid size-9 place-items-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-700">
-                    JD
+                    {userInitials}
                   </div>
                   <div className="hidden text-left sm:block">
-                    <p className="text-sm font-semibold">Jordan Davis</p>
-                    <p className="text-[11px] text-slate-400">Recruiter</p>
+                    <p className="text-sm font-semibold truncate max-w-[140px]">
+                      {userDisplayName}
+                    </p>
+                    <p className="text-[11px] text-slate-400 capitalize">
+                      {currentUser?.role?.toLowerCase() || "Recruiter"}
+                    </p>
                   </div>
                   <ChevronRight className="hidden size-4 rotate-90 text-slate-400 sm:block" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem>Recruiter Profile</DropdownMenuItem>
-                <DropdownMenuItem>Settings</DropdownMenuItem>
-                <DropdownMenuItem>Sign out</DropdownMenuItem>
+              <DropdownMenuContent align="end" className="w-52">
+                <div className="px-3 py-2 border-b border-slate-100">
+                  <p className="text-xs font-semibold text-slate-900 truncate">
+                    {currentUser?.email || "recruiter@smartats.com"}
+                  </p>
+                  <p className="text-[10px] text-slate-400">
+                    Role: {currentUser?.role || "RECRUITER"}
+                  </p>
+                </div>
+                <DropdownMenuItem onClick={() => setActiveTab("kanban")}>
+                  Pipeline Workspace
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setActiveTab("analytics")}>
+                  Analytics
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => logoutUser(navigate)}
+                  className="text-rose-600 focus:text-rose-700 font-semibold cursor-pointer"
+                >
+                  <LogOut className="mr-2 size-4" /> Sign out
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -790,7 +775,6 @@ function App() {
         {/* ===================== TAB 2: RECRUITER ANALYTICS ===================== */}
         {activeTab === "analytics" && (
           <main className="mx-auto max-w-[1540px] px-5 py-7 sm:px-8 lg:px-10">
-            {/* Title Section */}
             <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
               <div>
                 <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-400">
@@ -821,7 +805,7 @@ function App() {
                   Refresh
                 </Button>
                 <Button
-                  onClick={() => setPostOpen(true)}
+                  onClick={handleOpenPostModal}
                   size="sm"
                   className="bg-indigo-600 hover:bg-indigo-700 text-xs gap-1.5"
                 >
@@ -885,7 +869,6 @@ function App() {
 
             {/* Pipeline Drop-off and Hiring Summary */}
             <div className="grid gap-5 xl:grid-cols-[1.3fr_0.7fr]">
-              {/* Pipeline Drop-off Funnel Visual */}
               <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
                 <div className="flex items-start justify-between">
                   <div>
@@ -935,20 +918,8 @@ function App() {
                     )
                   })}
                 </div>
-
-                <div className="mt-6 flex items-center gap-5 border-t border-slate-100 pt-4 text-xs text-slate-500">
-                  <span className="flex items-center gap-1.5">
-                    <span className="size-2 rounded-full bg-indigo-600" />
-                    Applicant count per stage
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="size-2 rounded-full bg-slate-200" />
-                    Funnel drop-off ratio
-                  </span>
-                </div>
               </section>
 
-              {/* Average Time in Stage Breakdown */}
               <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 flex flex-col justify-between">
                 <div>
                   <div className="flex items-start justify-between">
@@ -1067,207 +1038,6 @@ function App() {
                 </table>
               </div>
             </section>
-          </main>
-        )}
-
-        {/* ===================== TAB 3: CANDIDATE JOB DISCOVERY ===================== */}
-        {activeTab === "candidate" && (
-          <main className="mx-auto max-w-[1450px] px-5 py-7 sm:px-8 lg:px-10">
-            <section className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-              <div>
-                <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-400">
-                  <span>Workspace</span>
-                  <ChevronRight className="size-3" />
-                  <span className="text-indigo-600 font-semibold">Find Jobs</span>
-                </div>
-                <h2 className="text-2xl font-bold tracking-tight sm:text-[28px]">
-                  Explore open roles
-                </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  Discover AI-matched positions and submit your resume directly to hiring teams.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => refetchJobs()}
-                  className="gap-2 text-xs"
-                >
-                  <RefreshCw
-                    className={`size-3.5 ${isLoadingJobs ? "animate-spin" : ""}`}
-                  />
-                  Refresh
-                </Button>
-              </div>
-            </section>
-
-            {/* Filter Bar */}
-            <section className="mb-7 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="grid gap-3 md:grid-cols-[1.5fr_1fr_1.2fr_1fr]">
-                <div className="relative">
-                  <Search className="absolute left-3 top-3.5 size-4 text-slate-400" />
-                  <Input
-                    placeholder="Search job titles, skills, or companies"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="pl-10 text-sm"
-                  />
-                </div>
-
-                <Select value={jobType} onValueChange={setJobType}>
-                  <SelectTrigger className="text-sm">
-                    <SelectValue placeholder="Job Type" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All job types</SelectItem>
-                    <SelectItem value="FULL_TIME">Full-time</SelectItem>
-                    <SelectItem value="REMOTE">Remote</SelectItem>
-                    <SelectItem value="CONTRACT">Contract</SelectItem>
-                    <SelectItem value="PART_TIME">Part-time</SelectItem>
-                    <SelectItem value="INTERNSHIP">Internship</SelectItem>
-                  </SelectContent>
-                </Select>
-
-                <div className="relative">
-                  <MapPin className="absolute left-3 top-3.5 size-4 text-slate-400" />
-                  <Input
-                    placeholder="Location (e.g. San Francisco, Remote)"
-                    value={location}
-                    onChange={(e) => setLocation(e.target.value)}
-                    className="pl-10 text-sm"
-                  />
-                </div>
-
-                <Select value={minSalary} onValueChange={setMinSalary}>
-                  <SelectTrigger className="text-sm">
-                    <SelectValue placeholder="Min. Salary" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Any Salary</SelectItem>
-                    <SelectItem value="60000">$60k+ / year</SelectItem>
-                    <SelectItem value="90000">$90k+ / year</SelectItem>
-                    <SelectItem value="120000">$120k+ / year</SelectItem>
-                    <SelectItem value="150000">$150k+ / year</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </section>
-
-            {/* Results Count */}
-            <div className="mb-4 flex items-center justify-between">
-              <p className="text-sm font-semibold text-slate-700">
-                <span className="text-indigo-600 font-bold">{jobs.length}</span>{" "}
-                {jobs.length === 1 ? "role" : "roles"} matching your criteria
-              </p>
-            </div>
-
-            {/* Loading / Cards */}
-            {isLoadingJobs ? (
-              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white py-20 text-center shadow-sm">
-                <Loader2 className="size-8 animate-spin text-indigo-600" />
-                <p className="mt-3 text-sm font-semibold text-slate-700">
-                  Fetching active job requisitions...
-                </p>
-              </div>
-            ) : jobs.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center shadow-sm">
-                <Search className="mx-auto mb-3 size-8 text-slate-300" />
-                <p className="font-semibold text-slate-800">No matching jobs found</p>
-                <p className="mt-1 text-sm text-slate-500">
-                  Try broadening your search criteria.
-                </p>
-              </div>
-            ) : (
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {jobs.map((job) => (
-                  <article
-                    key={job.id}
-                    className="group flex min-h-[260px] flex-col rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div
-                        className={`grid size-11 place-items-center rounded-xl text-base font-bold text-white shadow-sm ${getAvatarColor(
-                          job.company?.name
-                        )}`}
-                      >
-                        {job.company?.name
-                          ? job.company.name.charAt(0).toUpperCase()
-                          : "C"}
-                      </div>
-                      <Badge variant="outline" className="text-slate-500 font-normal">
-                        {formatRelativeTime(job.created_at)}
-                      </Badge>
-                    </div>
-
-                    <div className="mt-4">
-                      <h3 className="text-[17px] font-bold tracking-tight text-slate-900 line-clamp-1">
-                        {job.title}
-                      </h3>
-                      <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-slate-600">
-                        {job.company?.name || "Company"}
-                        {job.company?.is_verified && (
-                          <span
-                            title="Verified Company"
-                            className="inline-flex size-4 items-center justify-center rounded-full bg-indigo-600 text-white"
-                          >
-                            <Check className="size-2.5" />
-                          </span>
-                        )}
-                      </p>
-                    </div>
-
-                    <div className="mt-4 flex flex-col gap-1.5 text-xs text-slate-500">
-                      <span className="flex items-center gap-2">
-                        <MapPin className="size-3.5 text-slate-400 shrink-0" />
-                        <span className="truncate">{job.location || "Remote"}</span>
-                      </span>
-                      <span className="flex items-center gap-2">
-                        <CircleDollarSign className="size-3.5 text-slate-400 shrink-0" />
-                        <span>
-                          {formatSalary(job.salary_min, job.salary_max)} ·{" "}
-                          {formatJobType(job.job_type)}
-                        </span>
-                      </span>
-                    </div>
-
-                    <div className="mt-auto flex items-end justify-between gap-3 pt-5 border-t border-slate-50">
-                      <div className="flex flex-wrap gap-1.5 max-w-[200px]">
-                        {job.skills && job.skills.length > 0 ? (
-                          job.skills.slice(0, 3).map((skill) => (
-                            <Badge
-                              key={skill.id}
-                              variant={skill.is_required ? "secondary" : "outline"}
-                              className="text-[10px]"
-                            >
-                              {skill.skill_name}
-                            </Badge>
-                          ))
-                        ) : (
-                          <Badge variant="outline" className="text-[10px]">
-                            {job.department || "Full-time"}
-                          </Badge>
-                        )}
-                      </div>
-
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setSelectedJobToApply(job)
-                          setResumeFile(null)
-                          setCoverLetter("")
-                          setApplyError(null)
-                        }}
-                        className="bg-indigo-600 hover:bg-indigo-700"
-                      >
-                        Apply <ChevronRight className="size-3.5 ml-1" />
-                      </Button>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            )}
           </main>
         )}
       </div>
@@ -1473,7 +1243,7 @@ function App() {
                       className="bg-indigo-600 hover:bg-indigo-700 text-xs"
                       disabled={updateStatusMutation.isPending}
                       onClick={() => {
-                        const next = NEXT_STATUS[selectedApplication.status]!
+                        const next = NEXT_STATUS[selectedApplication.status]
                         handleStatusTransition(selectedApplication.id, next)
                         setSelectedApplication(null)
                       }}
@@ -1488,7 +1258,7 @@ function App() {
         </DialogContent>
       </Dialog>
 
-      {/* ===================== JOB POSTING MODAL (SHEET) ===================== */}
+      {/* ===================== JOB POSTING MODAL ===================== */}
       <Dialog open={postOpen} onOpenChange={setPostOpen}>
         <DialogContent className="max-w-[560px] max-h-[90vh] overflow-y-auto">
           <div className="mb-4">
@@ -1691,156 +1461,6 @@ function App() {
           </form>
         </DialogContent>
       </Dialog>
-
-      {/* ===================== CANDIDATE APPLY MODAL ===================== */}
-      <Dialog
-        open={!!selectedJobToApply}
-        onOpenChange={(open) => {
-          if (!open) {
-            setSelectedJobToApply(null)
-            setResumeFile(null)
-            setCoverLetter("")
-            setApplyError(null)
-          }
-        }}
-      >
-        <DialogContent className="max-w-lg">
-          <div className="mb-4">
-            <DialogTitle className="text-xl font-bold text-slate-900">
-              Apply to {selectedJobToApply?.title}
-            </DialogTitle>
-            <DialogDescription className="mt-1 text-xs text-slate-500">
-              {selectedJobToApply?.company?.name} ·{" "}
-              {selectedJobToApply?.location || "Remote"}
-            </DialogDescription>
-          </div>
-
-          {applyError && (
-            <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
-              <AlertCircle className="size-4 shrink-0 text-rose-500 mt-0.5" />
-              <span>{applyError}</span>
-            </div>
-          )}
-
-          <form onSubmit={handleApplySubmit} className="space-y-4">
-            <div className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
-              <div
-                className={`grid size-10 shrink-0 place-items-center rounded-lg text-sm font-bold text-white shadow-sm ${getAvatarColor(
-                  selectedJobToApply?.company?.name
-                )}`}
-              >
-                {selectedJobToApply?.company?.name
-                  ? selectedJobToApply.company.name.charAt(0).toUpperCase()
-                  : "C"}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-bold truncate">
-                  {selectedJobToApply?.title}
-                </p>
-                <p className="text-xs text-slate-500 truncate">
-                  {selectedJobToApply?.company?.name} ·{" "}
-                  {formatSalary(
-                    selectedJobToApply?.salary_min,
-                    selectedJobToApply?.salary_max
-                  )}
-                </p>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Resume Document <span className="text-rose-500">*</span>
-              </label>
-
-              {!resumeFile ? (
-                <label
-                  htmlFor="resume-upload"
-                  className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 px-6 py-8 text-center transition-colors hover:border-indigo-500 hover:bg-indigo-50/20"
-                >
-                  <UploadCloud className="mb-2 size-8 text-indigo-600" />
-                  <span className="text-sm font-bold text-slate-700">
-                    Upload your resume
-                  </span>
-                  <span className="mt-1 text-xs text-slate-400">
-                    PDF or DOCX up to 5MB · Analyzed by AI parser
-                  </span>
-                  <input
-                    id="resume-upload"
-                    type="file"
-                    accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    className="sr-only"
-                    onChange={handleFileChange}
-                  />
-                </label>
-              ) : (
-                <div className="flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50/50 p-3.5">
-                  <div className="flex items-center gap-3 truncate">
-                    <FileText className="size-6 shrink-0 text-indigo-600" />
-                    <div className="truncate">
-                      <p className="text-sm font-semibold text-slate-800 truncate">
-                        {resumeFile.name}
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        {(resumeFile.size / (1024 * 1024)).toFixed(2)} MB · Ready to
-                        submit
-                      </p>
-                    </div>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setResumeFile(null)}
-                    className="size-8 p-0 text-slate-400 hover:text-slate-700"
-                  >
-                    <X className="size-4" />
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Cover Note <span className="text-slate-400 font-normal">(optional)</span>
-              </label>
-              <textarea
-                rows={3}
-                placeholder="Introduce yourself and highlight key qualifications..."
-                value={coverLetter}
-                onChange={(e) => setCoverLetter(e.target.value)}
-                className="w-full resize-none rounded-lg border border-slate-200 bg-white p-3 text-sm outline-none placeholder:text-slate-400 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-600/10"
-              />
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
-              <Button
-                type="button"
-                variant="outline"
-                disabled={applyMutation.isPending}
-                onClick={() => setSelectedJobToApply(null)}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={applyMutation.isPending || !resumeFile}
-                className="bg-indigo-600 hover:bg-indigo-700 gap-2 min-w-36"
-              >
-                {applyMutation.isPending ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Submitting...
-                  </>
-                ) : (
-                  "Submit Application"
-                )}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }
-
-export default App

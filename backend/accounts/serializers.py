@@ -23,11 +23,19 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
         # Include user profile metadata in response body
-        data["user"] = {
+        user_info = {
             "id": str(self.user.id),
             "email": self.user.email,
             "role": self.user.role,
+            "first_name": self.user.first_name,
+            "last_name": self.user.last_name,
         }
+        if hasattr(self.user, "recruiter_profile") and self.user.recruiter_profile:
+            rec = self.user.recruiter_profile
+            user_info["company_id"] = str(rec.company_id) if rec.company_id else None
+            user_info["company_name"] = rec.company_name or (rec.company.name if rec.company else None)
+            user_info["title"] = rec.title
+        data["user"] = user_info
         return data
 
 
