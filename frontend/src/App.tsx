@@ -1,19 +1,25 @@
 import { ChangeEvent, FormEvent, useMemo, useState } from "react"
 import {
   AlertCircle,
+  ArrowRight,
   BarChart3,
   Bell,
   BriefcaseBusiness,
   Building2,
+  CalendarDays,
   Check,
+  ChevronDown,
   ChevronRight,
   CircleDollarSign,
   CircleUserRound,
+  ExternalLink,
   FileText,
   Filter,
+  Kanban,
   Loader2,
   MapPin,
   Menu,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
@@ -42,6 +48,12 @@ import {
   SelectValue,
 } from "./components/ui/primitives"
 import {
+  Application,
+  ApplicationStatus,
+  useApplications,
+  useUpdateApplicationStatus,
+} from "./hooks/useApplications"
+import {
   formatJobType,
   formatSalary,
   Job,
@@ -59,14 +71,24 @@ const AVATAR_COLORS = [
   "bg-rose-600",
 ]
 
-function getCompanyColor(name?: string): string {
-  if (!name) return "bg-indigo-600"
+function getAvatarColor(identifier?: string): string {
+  if (!identifier) return "bg-indigo-600"
   let hash = 0
-  for (let i = 0; i < name.length; i++) {
-    hash = name.charCodeAt(i) + ((hash << 5) - hash)
+  for (let i = 0; i < identifier.length; i++) {
+    hash = identifier.charCodeAt(i) + ((hash << 5) - hash)
   }
   const index = Math.abs(hash) % AVATAR_COLORS.length
   return AVATAR_COLORS[index]
+}
+
+function getInitials(text?: string): string {
+  if (!text) return "JD"
+  const clean = text.split("@")[0].replace(/[^a-zA-Z]/g, " ").trim()
+  const parts = clean.split(/\s+/)
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase()
+  }
+  return text.slice(0, 2).toUpperCase()
 }
 
 function formatRelativeTime(dateString?: string): string {
@@ -86,30 +108,90 @@ function formatRelativeTime(dateString?: string): string {
   return `${diffInWeeks}w ago`
 }
 
+function scoreTone(score: number | string | undefined | null): string {
+  if (score === undefined || score === null) {
+    return "border-slate-200 bg-slate-50 text-slate-500"
+  }
+  const val = Number(score)
+  if (val >= 80) return "border-emerald-200 bg-emerald-50 text-emerald-700"
+  if (val >= 60) return "border-indigo-200 bg-indigo-50 text-indigo-700"
+  return "border-amber-200 bg-amber-50 text-amber-700"
+}
+
+const KANBAN_COLUMNS: {
+  id: ApplicationStatus
+  title: string
+  tone: string
+}[] = [
+  { id: "APPLIED", title: "Applied", tone: "bg-indigo-500" },
+  { id: "SCREENING", title: "Screening", tone: "bg-violet-500" },
+  { id: "SHORTLISTED", title: "Shortlisted", tone: "bg-sky-500" },
+  { id: "INTERVIEW_SCHEDULED", title: "Interview", tone: "bg-amber-400" },
+  { id: "OFFERED", title: "Offered", tone: "bg-emerald-500" },
+]
+
+const NEXT_STATUS: Record<ApplicationStatus, ApplicationStatus | null> = {
+  APPLIED: "SCREENING",
+  SCREENING: "SHORTLISTED",
+  SHORTLISTED: "INTERVIEW_SCHEDULED",
+  INTERVIEW_SCHEDULED: "OFFERED",
+  OFFERED: null,
+  REJECTED: null,
+  WITHDRAWN: null,
+}
+
+const NEXT_STATUS_LABEL: Record<ApplicationStatus, string | null> = {
+  APPLIED: "Move to Screening",
+  SCREENING: "Shortlist Candidate",
+  SHORTLISTED: "Schedule Interview",
+  INTERVIEW_SCHEDULED: "Extend Offer",
+  OFFERED: "Hired",
+  REJECTED: null,
+  WITHDRAWN: null,
+}
+
 function App() {
-  const [activeTab, setActiveTab] = useState<"candidate" | "recruiter">("candidate")
+  const [activeTab, setActiveTab] = useState<"kanban" | "candidate" | "analytics">(
+    "kanban"
+  )
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
-  // Search & Filter State for Job Discovery
+  // Kanban Filter & Selection State
+  const [selectedJobFilter, setSelectedJobFilter] = useState<string>("all")
+  const [selectedApplication, setSelectedApplication] = useState<Application | null>(
+    null
+  )
+
+  // Candidate Job Discovery State
   const [search, setSearch] = useState("")
   const [location, setLocation] = useState("")
   const [jobType, setJobType] = useState("all")
   const [minSalary, setMinSalary] = useState<string>("all")
-
-  // Application Modal State
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null)
+  const [selectedJobToApply, setSelectedJobToApply] = useState<Job | null>(null)
   const [resumeFile, setResumeFile] = useState<File | null>(null)
   const [coverLetter, setCoverLetter] = useState("")
   const [applyError, setApplyError] = useState<string | null>(null)
   const [toastNotice, setToastNotice] = useState<string | null>(null)
 
-  // API Query Hooks
+  // Live Query Hooks
+  const {
+    data: applications = [],
+    isLoading: isLoadingApps,
+    isError: isErrorApps,
+    error: errorApps,
+    refetch: refetchApps,
+  } = useApplications({
+    job_id: selectedJobFilter !== "all" ? selectedJobFilter : undefined,
+  })
+
+  const updateStatusMutation = useUpdateApplicationStatus()
+
   const {
     data: jobs = [],
-    isLoading,
-    isError,
-    error,
-    refetch,
+    isLoading: isLoadingJobs,
+    isError: isErrorJobs,
+    error: errorJobs,
+    refetch: refetchJobs,
   } = useJobs({
     search,
     location,
@@ -118,9 +200,64 @@ function App() {
     is_active: true,
   })
 
-  // Apply Mutation Hook
   const applyMutation = useApplyToJob()
 
+  // Partition applications by status for Kanban columns
+  const applicationsByStatus = useMemo(() => {
+    const map: Record<ApplicationStatus, Application[]> = {
+      APPLIED: [],
+      SCREENING: [],
+      SHORTLISTED: [],
+      INTERVIEW_SCHEDULED: [],
+      OFFERED: [],
+      REJECTED: [],
+      WITHDRAWN: [],
+    }
+    applications.forEach((app) => {
+      if (map[app.status]) {
+        map[app.status].push(app)
+      }
+    })
+    return map
+  }, [applications])
+
+  // Average match score across pipeline
+  const averageMatchScore = useMemo(() => {
+    const scores = applications
+      .map((a) => (a.match_score?.overall_score ? Number(a.match_score.overall_score) : null))
+      .filter((s): s is number => s !== null)
+    if (!scores.length) return "78%"
+    const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)
+    return `${avg}%`
+  }, [applications])
+
+  // Handle status update
+  const handleStatusTransition = async (
+    applicationId: string,
+    newStatus: ApplicationStatus
+  ) => {
+    try {
+      await updateStatusMutation.mutateAsync({
+        applicationId,
+        newStatus,
+      })
+      setToastNotice(`Application moved to ${newStatus} successfully.`)
+      // If modal is open for this application, update local state
+      if (selectedApplication?.id === applicationId) {
+        setSelectedApplication((prev) =>
+          prev ? { ...prev, status: newStatus } : null
+        )
+      }
+    } catch (err: any) {
+      const msg =
+        err.response?.data?.detail ||
+        err.response?.data?.status?.[0] ||
+        "Failed to update application status."
+      setToastNotice(`Error: ${msg}`)
+    }
+  }
+
+  // Handle Candidate Apply
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     setApplyError(null)
     const file = e.target.files?.[0]
@@ -135,7 +272,7 @@ function App() {
 
   const handleApplySubmit = async (e: FormEvent) => {
     e.preventDefault()
-    if (!selectedJob) return
+    if (!selectedJobToApply) return
     if (!resumeFile) {
       setApplyError("Please select a PDF or DOCX resume to upload.")
       return
@@ -144,18 +281,17 @@ function App() {
     setApplyError(null)
     try {
       await applyMutation.mutateAsync({
-        jobId: selectedJob.id,
+        jobId: selectedJobToApply.id,
         file: resumeFile,
         coverLetter: coverLetter.trim() || undefined,
       })
 
       setToastNotice(
-        `Application for "${selectedJob.title}" at ${selectedJob.company.name} submitted successfully! AI matching is now analyzing your profile.`
+        `Application for "${selectedJobToApply.title}" at ${selectedJobToApply.company.name} submitted successfully! AI matching is now analyzing your profile.`
       )
-      // Reset modal state
       setResumeFile(null)
       setCoverLetter("")
-      setSelectedJob(null)
+      setSelectedJobToApply(null)
     } catch (err: any) {
       const detail =
         err.response?.data?.detail ||
@@ -168,7 +304,7 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[#f7f8fc] text-slate-900">
-      {/* Sidebar */}
+      {/* Sidebar Navigation */}
       <aside
         className={`${
           sidebarOpen ? "w-[248px]" : "w-[78px]"
@@ -184,8 +320,30 @@ function App() {
             </span>
           )}
         </div>
+
         <div className="flex flex-1 flex-col justify-between p-4">
           <nav className="flex flex-col gap-1.5" aria-label="Main navigation">
+            <button
+              onClick={() => setActiveTab("kanban")}
+              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
+                activeTab === "kanban"
+                  ? "bg-indigo-50 text-indigo-700"
+                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+              }`}
+            >
+              <Kanban className="size-5 shrink-0" />
+              {sidebarOpen && (
+                <>
+                  <span className="flex-1 text-left">Pipeline Kanban</span>
+                  {applications.length > 0 && (
+                    <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] text-indigo-700 font-bold">
+                      {applications.length}
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
+
             <button
               onClick={() => setActiveTab("candidate")}
               className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
@@ -197,18 +355,20 @@ function App() {
               <Search className="size-5 shrink-0" />
               {sidebarOpen && <span className="flex-1 text-left">Find Jobs</span>}
             </button>
+
             <button
-              onClick={() => setActiveTab("recruiter")}
+              onClick={() => setActiveTab("analytics")}
               className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
-                activeTab === "recruiter"
+                activeTab === "analytics"
                   ? "bg-indigo-50 text-indigo-700"
                   : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
               }`}
             >
               <BarChart3 className="size-5 shrink-0" />
-              {sidebarOpen && <span className="flex-1 text-left">Recruiter Analytics</span>}
+              {sidebarOpen && <span className="flex-1 text-left">Analytics</span>}
             </button>
           </nav>
+
           <div className="flex flex-col gap-1.5 border-t border-slate-100 pt-3">
             <button
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -222,13 +382,13 @@ function App() {
         </div>
       </aside>
 
-      {/* Main Content Area */}
+      {/* Main Container */}
       <div
         className={`${
           sidebarOpen ? "lg:pl-[248px]" : "lg:pl-[78px]"
         } min-h-screen transition-all`}
       >
-        {/* Header */}
+        {/* Top Navbar */}
         <header className="flex h-[76px] items-center justify-between border-b border-slate-200 bg-white px-5 sm:px-8">
           <div className="flex items-center gap-3 lg:hidden">
             <div className="grid size-8 place-items-center rounded-lg bg-indigo-600 text-white">
@@ -241,12 +401,18 @@ function App() {
 
           <div className="hidden lg:block">
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
-              {activeTab === "candidate" ? "Candidate Portal" : "Recruiter Portal"}
+              {activeTab === "kanban"
+                ? "Recruiter Workspace"
+                : activeTab === "candidate"
+                ? "Candidate Portal"
+                : "Recruiter Analytics"}
             </p>
             <h1 className="mt-0.5 text-lg font-bold">
-              {activeTab === "candidate"
-                ? "Find your next career opportunity"
-                : "Recruiter Pipeline & Analytics"}
+              {activeTab === "kanban"
+                ? "Applicant Pipeline & AI Matching"
+                : activeTab === "candidate"
+                ? "Explore Open Opportunities"
+                : "Hiring Performance Metrics"}
             </h1>
           </div>
 
@@ -263,14 +429,14 @@ function App() {
                   </div>
                   <div className="hidden text-left sm:block">
                     <p className="text-sm font-semibold">Jordan Davis</p>
-                    <p className="text-[11px] text-slate-400">Candidate</p>
+                    <p className="text-[11px] text-slate-400">Recruiter</p>
                   </div>
                   <ChevronRight className="hidden size-4 rotate-90 text-slate-400 sm:block" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem>Candidate Profile</DropdownMenuItem>
-                <DropdownMenuItem>Application History</DropdownMenuItem>
+                <DropdownMenuItem>Recruiter Profile</DropdownMenuItem>
+                <DropdownMenuItem>Manage Postings</DropdownMenuItem>
                 <DropdownMenuItem>Sign out</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -280,15 +446,15 @@ function App() {
         {/* Global Toast Alert */}
         {toastNotice && (
           <div className="mx-5 mt-5 sm:mx-8 lg:mx-10">
-            <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 shadow-sm">
+            <div className="flex items-center justify-between rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-900 shadow-sm">
               <div className="flex items-center gap-2">
-                <Check className="size-5 shrink-0 text-emerald-600" />
+                <Check className="size-5 shrink-0 text-indigo-600" />
                 <span>{toastNotice}</span>
               </div>
               <button
                 aria-label="Dismiss toast"
                 onClick={() => setToastNotice(null)}
-                className="text-emerald-600 hover:text-emerald-800"
+                className="text-indigo-600 hover:text-indigo-800"
               >
                 <X className="size-4" />
               </button>
@@ -296,10 +462,256 @@ function App() {
           </div>
         )}
 
-        {/* Candidate Job Discovery View */}
+        {/* ===================== TAB 1: KANBAN PIPELINE ===================== */}
+        {activeTab === "kanban" && (
+          <main className="mx-auto max-w-[1540px] px-5 py-7 sm:px-8 lg:px-10">
+            {/* Header and Filter Controls */}
+            <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+              <div>
+                <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-400">
+                  <span>Workspace</span>
+                  <ChevronRight className="size-3" />
+                  <span className="text-indigo-600 font-semibold">Pipelines</span>
+                </div>
+                <h2 className="text-2xl font-bold tracking-tight sm:text-[28px]">
+                  Applicant Pipeline
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Review AI-scored candidate profiles and advance applicants through stages.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Filter by Job */}
+                <div className="w-56">
+                  <Select value={selectedJobFilter} onValueChange={setSelectedJobFilter}>
+                    <SelectTrigger className="h-9 text-xs bg-white">
+                      <SelectValue placeholder="All job requisitions" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Requisitions ({jobs.length})</SelectItem>
+                      {jobs.map((j) => (
+                        <SelectItem key={j.id} value={j.id}>
+                          {j.title}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => refetchApps()}
+                  className="gap-2 text-xs"
+                >
+                  <RefreshCw
+                    className={`size-3.5 ${isLoadingApps ? "animate-spin" : ""}`}
+                  />
+                  Refresh
+                </Button>
+              </div>
+            </div>
+
+            {/* Metrics Bar */}
+            <div className="mb-7 grid gap-3 sm:grid-cols-3">
+              <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-indigo-50 text-indigo-600">
+                  <Users className="size-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Total Applicants</p>
+                  <p className="mt-0.5 text-xl font-bold">{applications.length}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-indigo-50 text-indigo-600">
+                  <Sparkles className="size-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Average Match Score</p>
+                  <p className="mt-0.5 text-xl font-bold">{averageMatchScore}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-indigo-50 text-indigo-600">
+                  <BriefcaseBusiness className="size-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Active Jobs</p>
+                  <p className="mt-0.5 text-xl font-bold">{jobs.length}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Loading Indicator */}
+            {isLoadingApps && (
+              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white py-20 text-center shadow-sm">
+                <Loader2 className="size-8 animate-spin text-indigo-600" />
+                <p className="mt-3 text-sm font-semibold text-slate-700">
+                  Loading applicant pipeline...
+                </p>
+              </div>
+            )}
+
+            {/* Error Message */}
+            {!isLoadingApps && isErrorApps && (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-center shadow-sm mb-6">
+                <AlertCircle className="mx-auto size-7 text-rose-500" />
+                <p className="mt-2 text-sm font-bold text-rose-900">
+                  Failed to load applications
+                </p>
+                <p className="mt-1 text-xs text-rose-700">
+                  {(errorApps as Error)?.message || "Check your backend connection."}
+                </p>
+              </div>
+            )}
+
+            {/* Kanban Horizontal Board */}
+            {!isLoadingApps && !isErrorApps && (
+              <section className="overflow-x-auto pb-6">
+                <div className="flex min-w-[1180px] gap-4">
+                  {KANBAN_COLUMNS.map((column) => {
+                    const columnApps = applicationsByStatus[column.id] || []
+                    return (
+                      <div key={column.id} className="w-[225px] shrink-0 xl:flex-1">
+                        {/* Column Header */}
+                        <div className="mb-3.5 flex items-center justify-between px-1">
+                          <div className="flex items-center gap-2">
+                            <span className={`size-2.5 rounded-full ${column.tone}`} />
+                            <h3 className="text-sm font-bold text-slate-900">
+                              {column.title}
+                            </h3>
+                            <span className="rounded-full bg-slate-200/80 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                              {columnApps.length}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Cards Column */}
+                        <div className="flex flex-col gap-3 min-h-[350px] rounded-2xl bg-slate-100/60 p-2.5 border border-slate-200/60">
+                          {columnApps.length === 0 ? (
+                            <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-slate-200 py-10 text-center text-xs text-slate-400">
+                              No candidates
+                            </div>
+                          ) : (
+                            columnApps.map((app) => {
+                              const scoreVal = app.match_score?.overall_score
+                                ? Math.round(Number(app.match_score.overall_score))
+                                : null
+                              const nextStatus = NEXT_STATUS[app.status]
+                              const nextLabel = NEXT_STATUS_LABEL[app.status]
+
+                              return (
+                                <div
+                                  key={app.id}
+                                  className="group rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md cursor-pointer"
+                                  onClick={() => setSelectedApplication(app)}
+                                >
+                                  {/* Card Top: Initials & Score */}
+                                  <div className="flex items-start justify-between gap-2">
+                                    <div
+                                      className={`grid size-8 place-items-center rounded-full text-xs font-bold text-white shadow-sm ${getAvatarColor(
+                                        app.candidate_email
+                                      )}`}
+                                    >
+                                      {getInitials(app.candidate_email)}
+                                    </div>
+
+                                    {scoreVal !== null ? (
+                                      <span
+                                        className={`rounded-md border px-2 py-0.5 text-[11px] font-bold ${scoreTone(
+                                          scoreVal
+                                        )}`}
+                                      >
+                                        {scoreVal}% match
+                                      </span>
+                                    ) : (
+                                      <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] text-slate-400">
+                                        Evaluating...
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Candidate Info */}
+                                  <div className="mt-2.5">
+                                    <h4 className="truncate text-xs font-bold text-slate-900">
+                                      {app.candidate_email.split("@")[0]}
+                                    </h4>
+                                    <p className="mt-0.5 truncate text-[11px] text-slate-500">
+                                      {app.job.title}
+                                    </p>
+                                    <p className="mt-1 flex items-center gap-1 text-[10px] text-slate-400">
+                                      <CalendarDays className="size-3" />
+                                      {formatRelativeTime(app.created_at)}
+                                    </p>
+                                  </div>
+
+                                  {/* Skills Chips */}
+                                  <div className="mt-2.5 flex flex-wrap gap-1">
+                                    {app.match_score?.matched_skills &&
+                                    app.match_score.matched_skills.length > 0 ? (
+                                      app.match_score.matched_skills
+                                        .slice(0, 2)
+                                        .map((s) => (
+                                          <Badge
+                                            key={s}
+                                            variant="outline"
+                                            className="px-1.5 py-0.5 text-[9px] border-emerald-200 bg-emerald-50 text-emerald-700"
+                                          >
+                                            {s}
+                                          </Badge>
+                                        ))
+                                    ) : (
+                                      <Badge
+                                        variant="outline"
+                                        className="px-1.5 py-0.5 text-[9px] text-slate-400"
+                                      >
+                                        AI Match
+                                      </Badge>
+                                    )}
+                                  </div>
+
+                                  {/* Card Bottom: Actions */}
+                                  <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-[11px] font-semibold">
+                                    <span className="flex items-center gap-1 text-indigo-600">
+                                      <Sparkles className="size-3" />
+                                      AI Insights
+                                    </span>
+
+                                    {nextStatus && (
+                                      <button
+                                        type="button"
+                                        title={nextLabel || "Advance"}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          handleStatusTransition(app.id, nextStatus)
+                                        }}
+                                        className="flex items-center gap-1 text-slate-400 hover:text-indigo-600 p-1"
+                                      >
+                                        <ArrowRight className="size-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              )
+                            })
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
+          </main>
+        )}
+
+        {/* ===================== TAB 2: CANDIDATE JOB DISCOVERY ===================== */}
         {activeTab === "candidate" && (
           <main className="mx-auto max-w-[1450px] px-5 py-7 sm:px-8 lg:px-10">
-            {/* Title Section */}
             <section className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
               <div>
                 <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-400">
@@ -319,23 +731,23 @@ function App() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => refetch()}
+                  onClick={() => refetchJobs()}
                   className="gap-2 text-xs"
                 >
-                  <RefreshCw className={`size-3.5 ${isLoading ? "animate-spin" : ""}`} />
+                  <RefreshCw
+                    className={`size-3.5 ${isLoadingJobs ? "animate-spin" : ""}`}
+                  />
                   Refresh
                 </Button>
               </div>
             </section>
 
-            {/* Filter & Search Bar */}
+            {/* Filter Bar */}
             <section className="mb-7 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="grid gap-3 md:grid-cols-[1.5fr_1fr_1.2fr_1fr]">
-                {/* Search Keyword */}
                 <div className="relative">
                   <Search className="absolute left-3 top-3.5 size-4 text-slate-400" />
                   <Input
-                    aria-label="Search job titles or companies"
                     placeholder="Search job titles, skills, or companies"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
@@ -343,9 +755,8 @@ function App() {
                   />
                 </div>
 
-                {/* Job Type Selector */}
                 <Select value={jobType} onValueChange={setJobType}>
-                  <SelectTrigger aria-label="Job Type" className="text-sm">
+                  <SelectTrigger className="text-sm">
                     <SelectValue placeholder="Job Type" />
                   </SelectTrigger>
                   <SelectContent>
@@ -358,11 +769,9 @@ function App() {
                   </SelectContent>
                 </Select>
 
-                {/* Location Filter */}
                 <div className="relative">
                   <MapPin className="absolute left-3 top-3.5 size-4 text-slate-400" />
                   <Input
-                    aria-label="Location"
                     placeholder="Location (e.g. San Francisco, Remote)"
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
@@ -370,9 +779,8 @@ function App() {
                   />
                 </div>
 
-                {/* Minimum Salary Filter */}
                 <Select value={minSalary} onValueChange={setMinSalary}>
-                  <SelectTrigger aria-label="Minimum Salary" className="text-sm">
+                  <SelectTrigger className="text-sm">
                     <SelectValue placeholder="Min. Salary" />
                   </SelectTrigger>
                   <SelectContent>
@@ -386,7 +794,7 @@ function App() {
               </div>
             </section>
 
-            {/* Results Count & Header */}
+            {/* Results Count */}
             <div className="mb-4 flex items-center justify-between">
               <p className="text-sm font-semibold text-slate-700">
                 <span className="text-indigo-600 font-bold">{jobs.length}</span>{" "}
@@ -394,64 +802,23 @@ function App() {
               </p>
             </div>
 
-            {/* Loading State */}
-            {isLoading && (
+            {/* Loading / Cards */}
+            {isLoadingJobs ? (
               <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white py-20 text-center shadow-sm">
                 <Loader2 className="size-8 animate-spin text-indigo-600" />
                 <p className="mt-3 text-sm font-semibold text-slate-700">
                   Fetching active job requisitions...
                 </p>
-                <p className="text-xs text-slate-400">Connecting to live SmartATS API</p>
               </div>
-            )}
-
-            {/* Error State */}
-            {!isLoading && isError && (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-8 text-center shadow-sm">
-                <AlertCircle className="mx-auto size-8 text-rose-500" />
-                <p className="mt-2 text-base font-bold text-rose-900">
-                  Unable to load jobs
-                </p>
-                <p className="mt-1 text-sm text-rose-700">
-                  {(error as Error)?.message || "Failed to connect to backend server."}
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => refetch()}
-                  className="mt-4 border-rose-300 bg-white text-rose-800 hover:bg-rose-100"
-                >
-                  Try Again
-                </Button>
-              </div>
-            )}
-
-            {/* Empty State */}
-            {!isLoading && !isError && jobs.length === 0 && (
+            ) : jobs.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center shadow-sm">
                 <Search className="mx-auto mb-3 size-8 text-slate-300" />
                 <p className="font-semibold text-slate-800">No matching jobs found</p>
                 <p className="mt-1 text-sm text-slate-500">
-                  Try adjusting your filters or expanding your search location.
+                  Try broadening your search criteria.
                 </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-4"
-                  onClick={() => {
-                    setSearch("")
-                    setLocation("")
-                    setJobType("all")
-                    setMinSalary("all")
-                  }}
-                >
-                  Clear all filters
-                </Button>
               </div>
-            )}
-
-            {/* Job Cards Grid */}
-            {!isLoading && !isError && jobs.length > 0 && (
+            ) : (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {jobs.map((job) => (
                   <article
@@ -460,7 +827,7 @@ function App() {
                   >
                     <div className="flex items-start justify-between">
                       <div
-                        className={`grid size-11 place-items-center rounded-xl text-base font-bold text-white shadow-sm ${getCompanyColor(
+                        className={`grid size-11 place-items-center rounded-xl text-base font-bold text-white shadow-sm ${getAvatarColor(
                           job.company?.name
                         )}`}
                       >
@@ -485,11 +852,6 @@ function App() {
                             className="inline-flex size-4 items-center justify-center rounded-full bg-indigo-600 text-white"
                           >
                             <Check className="size-2.5" />
-                          </span>
-                        )}
-                        {job.department && (
-                          <span className="text-xs text-slate-400">
-                            · {job.department}
                           </span>
                         )}
                       </p>
@@ -531,7 +893,7 @@ function App() {
                       <Button
                         size="sm"
                         onClick={() => {
-                          setSelectedJob(job)
+                          setSelectedJobToApply(job)
                           setResumeFile(null)
                           setCoverLetter("")
                           setApplyError(null)
@@ -548,65 +910,262 @@ function App() {
           </main>
         )}
 
-        {/* Recruiter Overview Fallback Tab */}
-        {activeTab === "recruiter" && (
+        {/* ===================== TAB 3: RECRUITER ANALYTICS ===================== */}
+        {activeTab === "analytics" && (
           <main className="mx-auto max-w-[1450px] px-5 py-7 sm:px-8 lg:px-10">
-            <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight">Hiring Performance</h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  Track your hiring pipeline and evaluate AI candidate match breakdowns.
-                </p>
-              </div>
-            </div>
-
+            <h2 className="text-2xl font-bold tracking-tight mb-6">
+              Recruiter Analytics & Performance
+            </h2>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-7">
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs font-medium text-slate-500">Active Requisitions</p>
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-medium text-slate-500">Active Job Postings</p>
                 <p className="mt-1 text-2xl font-bold">{jobs.length}</p>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs font-medium text-slate-500">Candidates Processed</p>
-                <p className="mt-1 text-2xl font-bold">148</p>
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-medium text-slate-500">Total Applicants</p>
+                <p className="mt-1 text-2xl font-bold">{applications.length}</p>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs font-medium text-slate-500">Avg. Time-to-Hire</p>
-                <p className="mt-1 text-2xl font-bold">18 days</p>
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-medium text-slate-500">Avg. Match Score</p>
+                <p className="mt-1 text-2xl font-bold">{averageMatchScore}</p>
               </div>
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <p className="text-xs font-medium text-slate-500">AI Match Accuracy</p>
-                <p className="mt-1 text-2xl font-bold">94.2%</p>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h3 className="text-base font-bold text-slate-900 mb-4">
-                Active Job Requisitions
-              </h3>
-              <div className="divide-y divide-slate-100">
-                {jobs.map((job) => (
-                  <div key={job.id} className="py-3 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold text-slate-900">{job.title}</p>
-                      <p className="text-xs text-slate-500">
-                        {job.company?.name} · {job.location}
-                      </p>
-                    </div>
-                    <Badge variant="success">Active</Badge>
-                  </div>
-                ))}
+              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+                <p className="text-xs font-medium text-slate-500">Interviews Scheduled</p>
+                <p className="mt-1 text-2xl font-bold">
+                  {applicationsByStatus.INTERVIEW_SCHEDULED.length}
+                </p>
               </div>
             </div>
           </main>
         )}
       </div>
 
-      {/* Application Dialog Modal */}
+      {/* ===================== AI EXPLAINABILITY MODAL ===================== */}
       <Dialog
-        open={!!selectedJob}
+        open={!!selectedApplication}
+        onOpenChange={(open) => !open && setSelectedApplication(null)}
+      >
+        <DialogContent className="max-w-[560px]">
+          {selectedApplication && (
+            <>
+              {/* Header */}
+              <div className="mb-4 flex items-start justify-between pr-6">
+                <div>
+                  <div className="mb-1.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-indigo-600">
+                    <Sparkles className="size-3.5" /> AI Explainability & Insights
+                  </div>
+                  <DialogTitle className="text-xl font-bold text-slate-900">
+                    {selectedApplication.candidate_email}
+                  </DialogTitle>
+                  <DialogDescription className="mt-0.5 text-xs text-slate-500">
+                    {selectedApplication.job.title} ·{" "}
+                    {formatRelativeTime(selectedApplication.created_at)}
+                  </DialogDescription>
+                </div>
+
+                <div
+                  className={`rounded-lg border px-2.5 py-1 text-xs font-bold ${scoreTone(
+                    selectedApplication.match_score?.overall_score
+                  )}`}
+                >
+                  {selectedApplication.match_score?.overall_score
+                    ? `${Math.round(
+                        Number(selectedApplication.match_score.overall_score)
+                      )}% match`
+                    : "Score Pending"}
+                </div>
+              </div>
+
+              {/* Conic Gradient Overall Score Visualization */}
+              <div className="flex flex-col items-center rounded-2xl bg-slate-50 py-6 border border-slate-100">
+                {(() => {
+                  const score = selectedApplication.match_score?.overall_score
+                    ? Math.round(Number(selectedApplication.match_score.overall_score))
+                    : 0
+                  return (
+                    <>
+                      <div
+                        className="grid size-32 place-items-center rounded-full shadow-inner"
+                        style={{
+                          background: `conic-gradient(#6366f1 ${score}%, #e2e8f0 0)`,
+                        }}
+                      >
+                        <div className="grid size-[104px] place-items-center rounded-full bg-white shadow-sm">
+                          <div className="text-center">
+                            <p className="text-3xl font-extrabold tracking-tight text-slate-900">
+                              {score}%
+                            </p>
+                            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                              Overall Score
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <p className="mt-3 text-xs font-semibold text-slate-700">
+                        {score >= 80
+                          ? "High match candidate for this requisition"
+                          : score >= 60
+                          ? "Solid candidate alignment with transferable skills"
+                          : "Moderate overlap; review missing skill requirements"}
+                      </p>
+
+                      {/* Sub-scores */}
+                      <div className="mt-3 flex items-center gap-6 text-[11px] text-slate-500">
+                        <span>
+                          Semantic Score:{" "}
+                          <strong className="text-slate-800">
+                            {selectedApplication.match_score?.semantic_score
+                              ? `${Math.round(
+                                  Number(selectedApplication.match_score.semantic_score)
+                                )}%`
+                              : "N/A"}
+                          </strong>
+                        </span>
+                        <span>
+                          Skill Overlap:{" "}
+                          <strong className="text-slate-800">
+                            {selectedApplication.match_score?.skill_overlap_score
+                              ? `${Math.round(
+                                  Number(
+                                    selectedApplication.match_score.skill_overlap_score
+                                  )
+                                )}%`
+                              : "N/A"}
+                          </strong>
+                        </span>
+                      </div>
+                    </>
+                  )
+                })()}
+              </div>
+
+              {/* Matched & Missing Skills Lists */}
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                {/* Matched Skills (Green Badges) */}
+                <div>
+                  <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Matched Skills (
+                    {selectedApplication.match_score?.matched_skills?.length || 0})
+                  </h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedApplication.match_score?.matched_skills &&
+                    selectedApplication.match_score.matched_skills.length > 0 ? (
+                      selectedApplication.match_score.matched_skills.map((skill) => (
+                        <Badge
+                          key={skill}
+                          variant="outline"
+                          className="border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-medium"
+                        >
+                          <Check className="mr-1 size-3" />
+                          {skill}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-xs text-slate-400">
+                        No matched skills identified
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Missing Skills (Red Badges) */}
+                <div>
+                  <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+                    Missing Skills (
+                    {selectedApplication.match_score?.missing_skills?.length || 0})
+                  </h4>
+                  <div className="flex flex-wrap gap-1.5">
+                    {selectedApplication.match_score?.missing_skills &&
+                    selectedApplication.match_score.missing_skills.length > 0 ? (
+                      selectedApplication.match_score.missing_skills.map((skill) => (
+                        <Badge
+                          key={skill}
+                          variant="outline"
+                          className="border-rose-200 bg-rose-50 text-rose-700 text-xs font-medium"
+                        >
+                          <X className="mr-1 size-3" />
+                          {skill}
+                        </Badge>
+                      ))
+                    ) : (
+                      <span className="text-xs text-emerald-600 font-medium">
+                        All required skills present
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Resume File Link */}
+              {selectedApplication.resume?.file && (
+                <div className="mt-4 flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3 text-xs">
+                  <div className="flex items-center gap-2 text-slate-700 truncate">
+                    <FileText className="size-4 shrink-0 text-indigo-600" />
+                    <span className="truncate">
+                      {selectedApplication.resume.original_filename || "Candidate Resume"}
+                    </span>
+                  </div>
+                  <a
+                    href={selectedApplication.resume.file}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1 font-semibold text-indigo-600 hover:text-indigo-800 shrink-0 ml-2"
+                  >
+                    Download <ExternalLink className="size-3" />
+                  </a>
+                </div>
+              )}
+
+              {/* Actions Footer */}
+              <div className="mt-6 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
+                <Button
+                  variant="outline"
+                  className="border-rose-200 text-rose-600 hover:bg-rose-50 text-xs"
+                  disabled={updateStatusMutation.isPending}
+                  onClick={() => {
+                    handleStatusTransition(selectedApplication.id, "REJECTED")
+                    setSelectedApplication(null)
+                  }}
+                >
+                  Reject
+                </Button>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    className="text-xs"
+                    onClick={() => setSelectedApplication(null)}
+                  >
+                    Close
+                  </Button>
+
+                  {NEXT_STATUS[selectedApplication.status] && (
+                    <Button
+                      className="bg-indigo-600 hover:bg-indigo-700 text-xs"
+                      disabled={updateStatusMutation.isPending}
+                      onClick={() => {
+                        const next = NEXT_STATUS[selectedApplication.status]!
+                        handleStatusTransition(selectedApplication.id, next)
+                        setSelectedApplication(null)
+                      }}
+                    >
+                      {NEXT_STATUS_LABEL[selectedApplication.status]}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ===================== CANDIDATE APPLY MODAL ===================== */}
+      <Dialog
+        open={!!selectedJobToApply}
         onOpenChange={(open) => {
           if (!open) {
-            setSelectedJob(null)
+            setSelectedJobToApply(null)
             setResumeFile(null)
             setCoverLetter("")
             setApplyError(null)
@@ -616,10 +1175,11 @@ function App() {
         <DialogContent className="max-w-lg">
           <div className="mb-4">
             <DialogTitle className="text-xl font-bold text-slate-900">
-              Apply to {selectedJob?.title}
+              Apply to {selectedJobToApply?.title}
             </DialogTitle>
             <DialogDescription className="mt-1 text-xs text-slate-500">
-              {selectedJob?.company?.name} · {selectedJob?.location || "Remote"}
+              {selectedJobToApply?.company?.name} ·{" "}
+              {selectedJobToApply?.location || "Remote"}
             </DialogDescription>
           </div>
 
@@ -631,27 +1191,30 @@ function App() {
           )}
 
           <form onSubmit={handleApplySubmit} className="space-y-4">
-            {/* Selected Job Card Preview */}
             <div className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
               <div
-                className={`grid size-10 shrink-0 place-items-center rounded-lg text-sm font-bold text-white shadow-sm ${getCompanyColor(
-                  selectedJob?.company?.name
+                className={`grid size-10 shrink-0 place-items-center rounded-lg text-sm font-bold text-white shadow-sm ${getAvatarColor(
+                  selectedJobToApply?.company?.name
                 )}`}
               >
-                {selectedJob?.company?.name
-                  ? selectedJob.company.name.charAt(0).toUpperCase()
+                {selectedJobToApply?.company?.name
+                  ? selectedJobToApply.company.name.charAt(0).toUpperCase()
                   : "C"}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-bold truncate">{selectedJob?.title}</p>
+                <p className="text-sm font-bold truncate">
+                  {selectedJobToApply?.title}
+                </p>
                 <p className="text-xs text-slate-500 truncate">
-                  {selectedJob?.company?.name} ·{" "}
-                  {formatSalary(selectedJob?.salary_min, selectedJob?.salary_max)}
+                  {selectedJobToApply?.company?.name} ·{" "}
+                  {formatSalary(
+                    selectedJobToApply?.salary_min,
+                    selectedJobToApply?.salary_max
+                  )}
                 </p>
               </div>
             </div>
 
-            {/* Resume Upload File Picker */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Resume Document <span className="text-rose-500">*</span>
@@ -686,7 +1249,8 @@ function App() {
                         {resumeFile.name}
                       </p>
                       <p className="text-[11px] text-slate-500">
-                        {(resumeFile.size / (1024 * 1024)).toFixed(2)} MB · Ready to submit
+                        {(resumeFile.size / (1024 * 1024)).toFixed(2)} MB · Ready to
+                        submit
                       </p>
                     </div>
                   </div>
@@ -703,27 +1267,25 @@ function App() {
               )}
             </div>
 
-            {/* Optional Cover Letter */}
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1.5">
                 Cover Note <span className="text-slate-400 font-normal">(optional)</span>
               </label>
               <textarea
                 rows={3}
-                placeholder="Introduce yourself and briefly highlight key qualifications..."
+                placeholder="Introduce yourself and highlight key qualifications..."
                 value={coverLetter}
                 onChange={(e) => setCoverLetter(e.target.value)}
                 className="w-full resize-none rounded-lg border border-slate-200 bg-white p-3 text-sm outline-none placeholder:text-slate-400 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-600/10"
               />
             </div>
 
-            {/* Submit & Cancel Buttons */}
             <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
               <Button
                 type="button"
                 variant="outline"
                 disabled={applyMutation.isPending}
-                onClick={() => setSelectedJob(null)}
+                onClick={() => setSelectedJobToApply(null)}
               >
                 Cancel
               </Button>
