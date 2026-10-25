@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useMemo, useState } from "react"
+import { ChangeEvent, FormEvent, KeyboardEvent, useMemo, useState } from "react"
 import {
   AlertCircle,
   ArrowRight,
@@ -8,10 +8,10 @@ import {
   Building2,
   CalendarDays,
   Check,
-  ChevronDown,
   ChevronRight,
   CircleDollarSign,
   CircleUserRound,
+  Clock3,
   ExternalLink,
   FileText,
   Filter,
@@ -19,12 +19,12 @@ import {
   Loader2,
   MapPin,
   Menu,
-  MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
   Settings2,
   Sparkles,
+  TrendingUp,
   UploadCloud,
   Users,
   X,
@@ -47,6 +47,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./components/ui/primitives"
+import { useAnalytics } from "./hooks/useAnalytics"
 import {
   Application,
   ApplicationStatus,
@@ -58,6 +59,8 @@ import {
   formatSalary,
   Job,
   useApplyToJob,
+  useCompanies,
+  useCreateJob,
   useJobs,
 } from "./hooks/useJobs"
 
@@ -151,18 +154,39 @@ const NEXT_STATUS_LABEL: Record<ApplicationStatus, string | null> = {
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<"kanban" | "candidate" | "analytics">(
+  const [activeTab, setActiveTab] = useState<"kanban" | "analytics" | "candidate">(
     "kanban"
   )
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
-  // Kanban Filter & Selection State
+  // Global Toast
+  const [toastNotice, setToastNotice] = useState<string | null>(null)
+
+  // Kanban State
   const [selectedJobFilter, setSelectedJobFilter] = useState<string>("all")
   const [selectedApplication, setSelectedApplication] = useState<Application | null>(
     null
   )
 
-  // Candidate Job Discovery State
+  // Job Posting Modal State
+  const [postOpen, setPostOpen] = useState(false)
+  const [postTitle, setPostTitle] = useState("")
+  const [postCompanyId, setPostCompanyId] = useState("")
+  const [postDepartment, setPostDepartment] = useState("Engineering")
+  const [postJobType, setPostJobType] = useState("FULL_TIME")
+  const [postLocation, setPostLocation] = useState("Remote")
+  const [postSalaryMin, setPostSalaryMin] = useState("")
+  const [postSalaryMax, setPostSalaryMax] = useState("")
+  const [postDescription, setPostDescription] = useState("")
+  const [postSkills, setPostSkills] = useState<string[]>([
+    "Python",
+    "Django",
+    "React",
+  ])
+  const [skillInput, setSkillInput] = useState("")
+  const [postError, setPostError] = useState<string | null>(null)
+
+  // Candidate Discovery State
   const [search, setSearch] = useState("")
   const [location, setLocation] = useState("")
   const [jobType, setJobType] = useState("all")
@@ -171,9 +195,8 @@ function App() {
   const [resumeFile, setResumeFile] = useState<File | null>(null)
   const [coverLetter, setCoverLetter] = useState("")
   const [applyError, setApplyError] = useState<string | null>(null)
-  const [toastNotice, setToastNotice] = useState<string | null>(null)
 
-  // Live Query Hooks
+  // API Hooks
   const {
     data: applications = [],
     isLoading: isLoadingApps,
@@ -200,6 +223,14 @@ function App() {
     is_active: true,
   })
 
+  const { data: companies = [] } = useCompanies()
+  const {
+    data: analytics,
+    isLoading: isLoadingAnalytics,
+    refetch: refetchAnalytics,
+  } = useAnalytics()
+
+  const createJobMutation = useCreateJob()
   const applyMutation = useApplyToJob()
 
   // Partition applications by status for Kanban columns
@@ -242,7 +273,6 @@ function App() {
         newStatus,
       })
       setToastNotice(`Application moved to ${newStatus} successfully.`)
-      // If modal is open for this application, update local state
       if (selectedApplication?.id === applicationId) {
         setSelectedApplication((prev) =>
           prev ? { ...prev, status: newStatus } : null
@@ -254,6 +284,69 @@ function App() {
         err.response?.data?.status?.[0] ||
         "Failed to update application status."
       setToastNotice(`Error: ${msg}`)
+    }
+  }
+
+  // Handle Skill Chip Adding
+  const handleAddSkill = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault()
+      const val = skillInput.trim()
+      if (
+        val &&
+        !postSkills.some((s) => s.toLowerCase() === val.toLowerCase())
+      ) {
+        setPostSkills([...postSkills, val])
+      }
+      setSkillInput("")
+    }
+  }
+
+  // Handle Job Creation Submit
+  const handleCreateJobSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    setPostError(null)
+
+    // Fallback company if not selected
+    const chosenCompanyId =
+      postCompanyId || companies.find((c) => c.is_verified)?.id || companies[0]?.id
+
+    if (!chosenCompanyId) {
+      setPostError("Please select a valid company for this job requisition.")
+      return
+    }
+
+    try {
+      await createJobMutation.mutateAsync({
+        title: postTitle.trim(),
+        company_id: chosenCompanyId,
+        department: postDepartment.trim() || undefined,
+        location: postLocation.trim() || "Remote",
+        job_type: postJobType,
+        salary_min: postSalaryMin ? Number(postSalaryMin) : undefined,
+        salary_max: postSalaryMax ? Number(postSalaryMax) : undefined,
+        description: postDescription.trim(),
+        skills: postSkills.map((s) => ({ skill_name: s, is_required: true })),
+        is_active: true,
+      })
+
+      setToastNotice(
+        `Job requisition "${postTitle}" published successfully! Candidates can now discover and apply.`
+      )
+      setPostOpen(false)
+      // Reset form
+      setPostTitle("")
+      setPostSalaryMin("")
+      setPostSalaryMax("")
+      setPostDescription("")
+      setPostSkills(["Python", "Django", "React"])
+    } catch (err: any) {
+      const detail =
+        err.response?.data?.detail ||
+        err.response?.data?.company?.[0] ||
+        err.response?.data?.salary_min?.[0] ||
+        "Failed to create job requisition. Please check your inputs."
+      setPostError(String(detail))
     }
   }
 
@@ -302,6 +395,13 @@ function App() {
     }
   }
 
+  // Calculate funnel max for progress width
+  const funnelMax = useMemo(() => {
+    if (!analytics?.status_funnel) return 1
+    const vals = Object.values(analytics.status_funnel)
+    return Math.max(1, ...vals)
+  }, [analytics])
+
   return (
     <div className="min-h-screen bg-[#f7f8fc] text-slate-900">
       {/* Sidebar Navigation */}
@@ -345,18 +445,6 @@ function App() {
             </button>
 
             <button
-              onClick={() => setActiveTab("candidate")}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
-                activeTab === "candidate"
-                  ? "bg-indigo-50 text-indigo-700"
-                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
-              }`}
-            >
-              <Search className="size-5 shrink-0" />
-              {sidebarOpen && <span className="flex-1 text-left">Find Jobs</span>}
-            </button>
-
-            <button
               onClick={() => setActiveTab("analytics")}
               className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
                 activeTab === "analytics"
@@ -366,6 +454,18 @@ function App() {
             >
               <BarChart3 className="size-5 shrink-0" />
               {sidebarOpen && <span className="flex-1 text-left">Analytics</span>}
+            </button>
+
+            <button
+              onClick={() => setActiveTab("candidate")}
+              className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ${
+                activeTab === "candidate"
+                  ? "bg-indigo-50 text-indigo-700"
+                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+              }`}
+            >
+              <Search className="size-5 shrink-0" />
+              {sidebarOpen && <span className="flex-1 text-left">Find Jobs</span>}
             </button>
           </nav>
 
@@ -403,24 +503,33 @@ function App() {
             <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
               {activeTab === "kanban"
                 ? "Recruiter Workspace"
-                : activeTab === "candidate"
-                ? "Candidate Portal"
-                : "Recruiter Analytics"}
+                : activeTab === "analytics"
+                ? "Analytics Dashboard"
+                : "Candidate Portal"}
             </p>
             <h1 className="mt-0.5 text-lg font-bold">
               {activeTab === "kanban"
                 ? "Applicant Pipeline & AI Matching"
-                : activeTab === "candidate"
-                ? "Explore Open Opportunities"
-                : "Hiring Performance Metrics"}
+                : activeTab === "analytics"
+                ? "Hiring Performance & Metrics"
+                : "Find Open Opportunities"}
             </h1>
           </div>
 
           <div className="flex items-center gap-3">
+            <Button
+              onClick={() => setPostOpen(true)}
+              size="sm"
+              className="bg-indigo-600 hover:bg-indigo-700 text-xs gap-1.5"
+            >
+              <Plus className="size-3.5" /> Post New Job
+            </Button>
+
             <Button variant="ghost" size="icon" className="relative">
               <Bell className="size-5 text-slate-500" />
               <span className="absolute right-2.5 top-2 size-1.5 rounded-full bg-rose-500 ring-2 ring-white" />
             </Button>
+
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-2 rounded-full p-1.5 hover:bg-slate-50">
@@ -436,7 +545,7 @@ function App() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem>Recruiter Profile</DropdownMenuItem>
-                <DropdownMenuItem>Manage Postings</DropdownMenuItem>
+                <DropdownMenuItem>Settings</DropdownMenuItem>
                 <DropdownMenuItem>Sign out</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -465,7 +574,6 @@ function App() {
         {/* ===================== TAB 1: KANBAN PIPELINE ===================== */}
         {activeTab === "kanban" && (
           <main className="mx-auto max-w-[1540px] px-5 py-7 sm:px-8 lg:px-10">
-            {/* Header and Filter Controls */}
             <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
               <div>
                 <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-400">
@@ -482,7 +590,6 @@ function App() {
               </div>
 
               <div className="flex flex-wrap items-center gap-3">
-                {/* Filter by Job */}
                 <div className="w-56">
                   <Select value={selectedJobFilter} onValueChange={setSelectedJobFilter}>
                     <SelectTrigger className="h-9 text-xs bg-white">
@@ -546,30 +653,7 @@ function App() {
               </div>
             </div>
 
-            {/* Loading Indicator */}
-            {isLoadingApps && (
-              <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-white py-20 text-center shadow-sm">
-                <Loader2 className="size-8 animate-spin text-indigo-600" />
-                <p className="mt-3 text-sm font-semibold text-slate-700">
-                  Loading applicant pipeline...
-                </p>
-              </div>
-            )}
-
-            {/* Error Message */}
-            {!isLoadingApps && isErrorApps && (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 p-6 text-center shadow-sm mb-6">
-                <AlertCircle className="mx-auto size-7 text-rose-500" />
-                <p className="mt-2 text-sm font-bold text-rose-900">
-                  Failed to load applications
-                </p>
-                <p className="mt-1 text-xs text-rose-700">
-                  {(errorApps as Error)?.message || "Check your backend connection."}
-                </p>
-              </div>
-            )}
-
-            {/* Kanban Horizontal Board */}
+            {/* Kanban Columns */}
             {!isLoadingApps && !isErrorApps && (
               <section className="overflow-x-auto pb-6">
                 <div className="flex min-w-[1180px] gap-4">
@@ -577,7 +661,6 @@ function App() {
                     const columnApps = applicationsByStatus[column.id] || []
                     return (
                       <div key={column.id} className="w-[225px] shrink-0 xl:flex-1">
-                        {/* Column Header */}
                         <div className="mb-3.5 flex items-center justify-between px-1">
                           <div className="flex items-center gap-2">
                             <span className={`size-2.5 rounded-full ${column.tone}`} />
@@ -590,7 +673,6 @@ function App() {
                           </div>
                         </div>
 
-                        {/* Cards Column */}
                         <div className="flex flex-col gap-3 min-h-[350px] rounded-2xl bg-slate-100/60 p-2.5 border border-slate-200/60">
                           {columnApps.length === 0 ? (
                             <div className="flex flex-1 items-center justify-center rounded-xl border border-dashed border-slate-200 py-10 text-center text-xs text-slate-400">
@@ -610,7 +692,6 @@ function App() {
                                   className="group rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-indigo-300 hover:shadow-md cursor-pointer"
                                   onClick={() => setSelectedApplication(app)}
                                 >
-                                  {/* Card Top: Initials & Score */}
                                   <div className="flex items-start justify-between gap-2">
                                     <div
                                       className={`grid size-8 place-items-center rounded-full text-xs font-bold text-white shadow-sm ${getAvatarColor(
@@ -635,7 +716,6 @@ function App() {
                                     )}
                                   </div>
 
-                                  {/* Candidate Info */}
                                   <div className="mt-2.5">
                                     <h4 className="truncate text-xs font-bold text-slate-900">
                                       {app.candidate_email.split("@")[0]}
@@ -649,7 +729,6 @@ function App() {
                                     </p>
                                   </div>
 
-                                  {/* Skills Chips */}
                                   <div className="mt-2.5 flex flex-wrap gap-1">
                                     {app.match_score?.matched_skills &&
                                     app.match_score.matched_skills.length > 0 ? (
@@ -674,7 +753,6 @@ function App() {
                                     )}
                                   </div>
 
-                                  {/* Card Bottom: Actions */}
                                   <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-[11px] font-semibold">
                                     <span className="flex items-center gap-1 text-indigo-600">
                                       <Sparkles className="size-3" />
@@ -709,7 +787,290 @@ function App() {
           </main>
         )}
 
-        {/* ===================== TAB 2: CANDIDATE JOB DISCOVERY ===================== */}
+        {/* ===================== TAB 2: RECRUITER ANALYTICS ===================== */}
+        {activeTab === "analytics" && (
+          <main className="mx-auto max-w-[1540px] px-5 py-7 sm:px-8 lg:px-10">
+            {/* Title Section */}
+            <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+              <div>
+                <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-400">
+                  <span>Workspace</span>
+                  <ChevronRight className="size-3" />
+                  <span className="text-indigo-600 font-semibold">Overview</span>
+                </div>
+                <h2 className="text-2xl font-bold tracking-tight sm:text-[28px]">
+                  Hiring Performance
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Monitor your applicant pipeline drop-off, stage durations, and requisition activity.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => refetchAnalytics()}
+                  className="gap-2 text-xs"
+                >
+                  <RefreshCw
+                    className={`size-3.5 ${
+                      isLoadingAnalytics ? "animate-spin" : ""
+                    }`}
+                  />
+                  Refresh
+                </Button>
+                <Button
+                  onClick={() => setPostOpen(true)}
+                  size="sm"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-xs gap-1.5"
+                >
+                  <Plus className="size-3.5" /> Post New Job
+                </Button>
+              </div>
+            </div>
+
+            {/* KPI Cards */}
+            <div className="mb-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-indigo-50 text-indigo-600">
+                  <BriefcaseBusiness className="size-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Total Active Jobs</p>
+                  <p className="mt-0.5 text-xl font-bold">
+                    {analytics?.total_active_jobs ?? jobs.length}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-indigo-50 text-indigo-600">
+                  <Users className="size-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Total Applicants</p>
+                  <p className="mt-0.5 text-xl font-bold">
+                    {analytics?.total_applications ?? applications.length}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-indigo-50 text-indigo-600">
+                  <Clock3 className="size-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Avg. Time-to-Hire</p>
+                  <p className="mt-0.5 text-xl font-bold">
+                    {analytics?.average_time_to_hire_days !== undefined
+                      ? `${analytics.average_time_to_hire_days} days`
+                      : "0 days"}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="grid size-10 shrink-0 place-items-center rounded-xl bg-indigo-50 text-indigo-600">
+                  <TrendingUp className="size-5" />
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-500">Pipeline Stages</p>
+                  <p className="mt-0.5 text-xl font-bold">
+                    {Object.keys(analytics?.status_funnel || {}).length || 5} stages
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Pipeline Drop-off and Hiring Summary */}
+            <div className="grid gap-5 xl:grid-cols-[1.3fr_0.7fr]">
+              {/* Pipeline Drop-off Funnel Visual */}
+              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900">
+                      Pipeline Drop-off
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Applicant status funnel and volume across hiring stages
+                    </p>
+                  </div>
+                  <Badge variant="outline" className="text-xs text-indigo-600 font-semibold">
+                    Live Funnel
+                  </Badge>
+                </div>
+
+                <div className="mt-7 flex flex-col gap-4">
+                  {[
+                    { key: "APPLIED", label: "Applied", color: "bg-indigo-600" },
+                    { key: "SCREENING", label: "Screening", color: "bg-violet-600" },
+                    { key: "SHORTLISTED", label: "Shortlisted", color: "bg-sky-500" },
+                    {
+                      key: "INTERVIEW_SCHEDULED",
+                      label: "Interview",
+                      color: "bg-amber-400",
+                    },
+                    { key: "OFFERED", label: "Offered", color: "bg-emerald-500" },
+                  ].map((stage) => {
+                    const count = analytics?.status_funnel?.[stage.key] ?? 0
+                    const pct = Math.round((count / funnelMax) * 100)
+                    return (
+                      <div key={stage.key} className="flex items-center gap-4">
+                        <span className="w-24 text-xs font-semibold text-slate-600 truncate">
+                          {stage.label}
+                        </span>
+                        <div className="h-8 flex-1 rounded-lg bg-slate-100 overflow-hidden">
+                          <div
+                            className={`flex h-full items-center justify-end rounded-lg px-3 text-xs font-bold text-white transition-all duration-500 ${stage.color}`}
+                            style={{ width: `${Math.max(count > 0 ? 12 : 0, pct)}%` }}
+                          >
+                            {count > 0 ? count : ""}
+                          </div>
+                        </div>
+                        <span className="w-12 text-right text-xs font-bold text-slate-800">
+                          {count}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="mt-6 flex items-center gap-5 border-t border-slate-100 pt-4 text-xs text-slate-500">
+                  <span className="flex items-center gap-1.5">
+                    <span className="size-2 rounded-full bg-indigo-600" />
+                    Applicant count per stage
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="size-2 rounded-full bg-slate-200" />
+                    Funnel drop-off ratio
+                  </span>
+                </div>
+              </section>
+
+              {/* Average Time in Stage Breakdown */}
+              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900">
+                        Time-in-Stage
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Average duration candidates spend in each stage
+                      </p>
+                    </div>
+                    <Sparkles className="size-5 text-indigo-600" />
+                  </div>
+
+                  <div className="mt-6 flex flex-col gap-3">
+                    {analytics?.average_time_in_stage_days ? (
+                      Object.entries(analytics.average_time_in_stage_days)
+                        .slice(0, 5)
+                        .map(([stageKey, days]) => (
+                          <div
+                            key={stageKey}
+                            className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/70 p-3"
+                          >
+                            <span className="text-xs font-semibold text-slate-700 capitalize">
+                              {stageKey.toLowerCase().replace("_", " ")}
+                            </span>
+                            <Badge variant="outline" className="text-xs font-bold">
+                              {days} days
+                            </Badge>
+                          </div>
+                        ))
+                    ) : (
+                      <p className="text-xs text-slate-400">
+                        No stage duration history recorded yet.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 text-xs text-indigo-900">
+                  <p className="font-semibold">Automated Insights</p>
+                  <p className="mt-0.5 text-[11px] text-slate-600">
+                    AI screening reduces initial review time by over 65%.
+                  </p>
+                </div>
+              </section>
+            </div>
+
+            {/* Active Requisitions Activity Table */}
+            <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    Requisition Activity
+                  </h3>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Live candidate volume mapped per job requisition
+                  </p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-[11px] uppercase tracking-wider text-slate-400">
+                      <th className="pb-3 font-semibold">Job Title</th>
+                      <th className="pb-3 font-semibold">Company</th>
+                      <th className="pb-3 font-semibold">Total Applicants</th>
+                      <th className="pb-3 font-semibold">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {analytics?.applicants_per_job &&
+                    analytics.applicants_per_job.length > 0 ? (
+                      analytics.applicants_per_job.map((item) => (
+                        <tr key={item.job_id} className="text-sm">
+                          <td className="py-3 font-semibold text-slate-900">
+                            {item.job_title}
+                          </td>
+                          <td className="py-3 text-xs text-slate-600">
+                            {item.company_name || "Internal"}
+                          </td>
+                          <td className="py-3 font-bold text-indigo-600">
+                            {item.total_applicants}
+                          </td>
+                          <td className="py-3">
+                            <Badge variant="success">Active</Badge>
+                          </td>
+                        </tr>
+                      ))
+                    ) : jobs.length > 0 ? (
+                      jobs.map((j) => (
+                        <tr key={j.id} className="text-sm">
+                          <td className="py-3 font-semibold text-slate-900">
+                            {j.title}
+                          </td>
+                          <td className="py-3 text-xs text-slate-600">
+                            {j.company?.name || "Internal"}
+                          </td>
+                          <td className="py-3 font-bold text-slate-600">
+                            {applications.filter((a) => a.job.id === j.id).length}
+                          </td>
+                          <td className="py-3">
+                            <Badge variant="success">Active</Badge>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={4} className="py-6 text-center text-xs text-slate-400">
+                          No active requisitions found. Click &quot;Post New Job&quot; to publish your first role.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </main>
+        )}
+
+        {/* ===================== TAB 3: CANDIDATE JOB DISCOVERY ===================== */}
         {activeTab === "candidate" && (
           <main className="mx-auto max-w-[1450px] px-5 py-7 sm:px-8 lg:px-10">
             <section className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
@@ -909,35 +1270,6 @@ function App() {
             )}
           </main>
         )}
-
-        {/* ===================== TAB 3: RECRUITER ANALYTICS ===================== */}
-        {activeTab === "analytics" && (
-          <main className="mx-auto max-w-[1450px] px-5 py-7 sm:px-8 lg:px-10">
-            <h2 className="text-2xl font-bold tracking-tight mb-6">
-              Recruiter Analytics & Performance
-            </h2>
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4 mb-7">
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <p className="text-xs font-medium text-slate-500">Active Job Postings</p>
-                <p className="mt-1 text-2xl font-bold">{jobs.length}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <p className="text-xs font-medium text-slate-500">Total Applicants</p>
-                <p className="mt-1 text-2xl font-bold">{applications.length}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <p className="text-xs font-medium text-slate-500">Avg. Match Score</p>
-                <p className="mt-1 text-2xl font-bold">{averageMatchScore}</p>
-              </div>
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-                <p className="text-xs font-medium text-slate-500">Interviews Scheduled</p>
-                <p className="mt-1 text-2xl font-bold">
-                  {applicationsByStatus.INTERVIEW_SCHEDULED.length}
-                </p>
-              </div>
-            </div>
-          </main>
-        )}
       </div>
 
       {/* ===================== AI EXPLAINABILITY MODAL ===================== */}
@@ -948,7 +1280,6 @@ function App() {
         <DialogContent className="max-w-[560px]">
           {selectedApplication && (
             <>
-              {/* Header */}
               <div className="mb-4 flex items-start justify-between pr-6">
                 <div>
                   <div className="mb-1.5 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-indigo-600">
@@ -976,7 +1307,7 @@ function App() {
                 </div>
               </div>
 
-              {/* Conic Gradient Overall Score Visualization */}
+              {/* Conic Gradient Overall Score */}
               <div className="flex flex-col items-center rounded-2xl bg-slate-50 py-6 border border-slate-100">
                 {(() => {
                   const score = selectedApplication.match_score?.overall_score
@@ -1010,7 +1341,6 @@ function App() {
                           : "Moderate overlap; review missing skill requirements"}
                       </p>
 
-                      {/* Sub-scores */}
                       <div className="mt-3 flex items-center gap-6 text-[11px] text-slate-500">
                         <span>
                           Semantic Score:{" "}
@@ -1040,9 +1370,8 @@ function App() {
                 })()}
               </div>
 
-              {/* Matched & Missing Skills Lists */}
+              {/* Matched & Missing Skills */}
               <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                {/* Matched Skills (Green Badges) */}
                 <div>
                   <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
                     Matched Skills (
@@ -1069,7 +1398,6 @@ function App() {
                   </div>
                 </div>
 
-                {/* Missing Skills (Red Badges) */}
                 <div>
                   <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
                     Missing Skills (
@@ -1097,7 +1425,7 @@ function App() {
                 </div>
               </div>
 
-              {/* Resume File Link */}
+              {/* Resume File */}
               {selectedApplication.resume?.file && (
                 <div className="mt-4 flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3 text-xs">
                   <div className="flex items-center gap-2 text-slate-700 truncate">
@@ -1117,7 +1445,7 @@ function App() {
                 </div>
               )}
 
-              {/* Actions Footer */}
+              {/* Action Buttons */}
               <div className="mt-6 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
                 <Button
                   variant="outline"
@@ -1157,6 +1485,210 @@ function App() {
               </div>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ===================== JOB POSTING MODAL (SHEET) ===================== */}
+      <Dialog open={postOpen} onOpenChange={setPostOpen}>
+        <DialogContent className="max-w-[560px] max-h-[90vh] overflow-y-auto">
+          <div className="mb-4">
+            <div className="mb-2 grid size-10 place-items-center rounded-xl bg-indigo-50 text-indigo-600">
+              <BriefcaseBusiness className="size-5" />
+            </div>
+            <DialogTitle className="text-xl font-bold text-slate-900">
+              Post a New Job Requisition
+            </DialogTitle>
+            <DialogDescription className="mt-1 text-xs text-slate-500">
+              Create a requisition to start receiving and AI-matching candidates.
+            </DialogDescription>
+          </div>
+
+          {postError && (
+            <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+              <AlertCircle className="size-4 shrink-0 text-rose-500 mt-0.5" />
+              <span>{postError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleCreateJobSubmit} className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Job Title <span className="text-rose-500">*</span>
+                </label>
+                <Input
+                  required
+                  placeholder="e.g. Senior Frontend Engineer"
+                  value={postTitle}
+                  onChange={(e) => setPostTitle(e.target.value)}
+                  className="text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Company <span className="text-rose-500">*</span>
+                </label>
+                <Select value={postCompanyId} onValueChange={setPostCompanyId}>
+                  <SelectTrigger className="text-sm">
+                    <SelectValue placeholder="Select company" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {companies.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name} {c.is_verified ? "✓" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Department
+                </label>
+                <Input
+                  placeholder="e.g. Engineering"
+                  value={postDepartment}
+                  onChange={(e) => setPostDepartment(e.target.value)}
+                  className="text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Job Type
+                </label>
+                <Select value={postJobType} onValueChange={setPostJobType}>
+                  <SelectTrigger className="text-sm">
+                    <SelectValue placeholder="Job type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="FULL_TIME">Full-time</SelectItem>
+                    <SelectItem value="REMOTE">Remote</SelectItem>
+                    <SelectItem value="CONTRACT">Contract</SelectItem>
+                    <SelectItem value="PART_TIME">Part-time</SelectItem>
+                    <SelectItem value="INTERNSHIP">Internship</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Location
+                </label>
+                <Input
+                  placeholder="e.g. Remote / NYC"
+                  value={postLocation}
+                  onChange={(e) => setPostLocation(e.target.value)}
+                  className="text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Min Salary ($ / yr)
+                </label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 120000"
+                  value={postSalaryMin}
+                  onChange={(e) => setPostSalaryMin(e.target.value)}
+                  className="text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Max Salary ($ / yr)
+                </label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 160000"
+                  value={postSalaryMax}
+                  onChange={(e) => setPostSalaryMax(e.target.value)}
+                  className="text-sm"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                Job Description <span className="text-rose-500">*</span>
+              </label>
+              <textarea
+                required
+                rows={4}
+                placeholder="Outline responsibilities, requirements, and tech stack..."
+                value={postDescription}
+                onChange={(e) => setPostDescription(e.target.value)}
+                className="w-full resize-none rounded-lg border border-slate-200 bg-white p-3 text-sm outline-none placeholder:text-slate-400 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-600/10"
+              />
+            </div>
+
+            {/* Required Skills Chip Input */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                Required Technical Skills (Press Enter to Add)
+              </label>
+              <Input
+                placeholder="Type a skill (e.g. React, PostgreSQL) and press Enter"
+                value={skillInput}
+                onChange={(e) => setSkillInput(e.target.value)}
+                onKeyDown={handleAddSkill}
+                className="text-sm"
+              />
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {postSkills.map((skill) => (
+                  <Badge
+                    key={skill}
+                    variant="outline"
+                    className="gap-1 border-indigo-200 bg-indigo-50 text-indigo-700 text-xs py-1"
+                  >
+                    {skill}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${skill}`}
+                      onClick={() =>
+                        setPostSkills(postSkills.filter((s) => s !== skill))
+                      }
+                      className="ml-1 text-indigo-400 hover:text-indigo-800"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={createJobMutation.isPending}
+                onClick={() => setPostOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={createJobMutation.isPending}
+                className="bg-indigo-600 hover:bg-indigo-700 min-w-36 gap-2"
+              >
+                {createJobMutation.isPending ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Publishing...
+                  </>
+                ) : (
+                  "Publish Requisition"
+                )}
+              </Button>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
 

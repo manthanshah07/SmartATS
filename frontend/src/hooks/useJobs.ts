@@ -173,3 +173,53 @@ export function useApplyToJob() {
     },
   })
 }
+
+export interface CreateJobSkillParam {
+  skill_name: string
+  is_required?: boolean
+}
+
+export interface CreateJobParams {
+  title: string
+  company_id: string
+  department?: string
+  location?: string
+  job_type: string
+  salary_min?: number | string
+  salary_max?: number | string
+  description: string
+  skills?: CreateJobSkillParam[]
+  is_active?: boolean
+}
+
+export function useCreateJob() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (jobData: CreateJobParams) => {
+      const response = await api.post<Job>("/jobs/", jobData)
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["jobs"] })
+      queryClient.invalidateQueries({ queryKey: ["recruiter-analytics"] })
+      queryClient.invalidateQueries({ queryKey: ["analytics"] })
+    },
+  })
+}
+
+export function useCompanies() {
+  return useQuery({
+    queryKey: ["companies"],
+    queryFn: async () => {
+      const response = await api.get<PaginatedResponse<Company> | Company[]>(
+        "/companies/"
+      )
+      if (Array.isArray(response.data)) {
+        return response.data
+      }
+      return response.data.results
+    },
+  })
+}
+
